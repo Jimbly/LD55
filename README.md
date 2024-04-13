@@ -44,4 +44,4 @@ Limits:
   Cells      1 - 50
   Ink        25 - 450
   Sym        0 - 100
-  Power      0 - 100
+  Power      5 - 100

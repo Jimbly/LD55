@@ -10,7 +10,13 @@ import * as camera2d from 'glov/client/camera2d';
 import * as effects from 'glov/client/effects';
 import { effectsQueue } from 'glov/client/effects';
 import * as engine from 'glov/client/engine';
-import { ALIGN, Font, fontStyle, intColorFromVec4Color } from 'glov/client/font';
+import {
+  ALIGN,
+  Font,
+  fontStyle,
+  intColorFromVec4Color,
+  vec4ColorFromIntColor,
+} from 'glov/client/font';
 import { framebufferEnd } from 'glov/client/framebuffer';
 import {
   KEYS,
@@ -23,8 +29,9 @@ import {
   mousePos,
 } from 'glov/client/input';
 import { localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
+import { markdownAuto } from 'glov/client/markdown';
+import { markdownImageRegister } from 'glov/client/markdown_renderables';
 import { netInit } from 'glov/client/net';
-import { spriteSetGet } from 'glov/client/sprite_sets';
 import {
   Sprite,
   Texture,
@@ -37,15 +44,19 @@ import {
 import {
   LINE_CAP_ROUND,
   drawCircle,
+  drawHBox,
   drawLine,
+  drawRect,
+  drawRect2,
   playUISound,
   scaleSizes,
   setButtonHeight,
   setFontHeight,
   uiTextHeight,
 } from 'glov/client/ui';
+import { randCreate, shuffleArray } from 'glov/common/rand_alea';
 import { DataObject, TSMap, VoidFunc } from 'glov/common/types';
-import { nop, ridx } from 'glov/common/util';
+import { clamp, nop, ridx } from 'glov/common/util';
 import {
   Vec4,
   v2dist,
@@ -56,6 +67,7 @@ import {
   vec2,
   vec4,
 } from 'glov/common/vmath';
+import { randomDemonName } from './demon_names';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const { PI, abs, atan2, cos, floor, max, min, round, sin, sqrt } = Math;
@@ -68,6 +80,8 @@ Z.LINES = 9;
 Z.POWER = 11;
 Z.POSTPROCESS = 15;
 Z.HOVER = 20;
+Z.DEMON = 100;
+Z.UI = 100;
 Z.RUNES = 100; // Z.POWER;
 
 // Virtual viewport for our game logic
@@ -82,7 +96,13 @@ const palette = [
   vec4(0, 0, 1, 1),
   vec4(196/255, 17/255, 255/255, 1),
   v3iScale(vec4(196/255, 17/255, 255/255, 1), 0.35) as Vec4,
+  vec4ColorFromIntColor(vec4(), 0x1b0326ff),
+  vec4ColorFromIntColor(vec4(), 0x7a1c4bff),
+  vec4ColorFromIntColor(vec4(), 0x45ba7fff),
+  vec4ColorFromIntColor(vec4(), 0xba5044ff),
+  vec4ColorFromIntColor(vec4(), 0xd7c4b3ff),
 ];
+const font_palette = palette.map(intColorFromVec4Color);
 const PALETTE_CIRCLE = 0;
 const PALETTE_LINE = 0;
 const PALETTE_POWER = 1;
@@ -92,6 +112,12 @@ const PALETTE_HOVER_DELETE = 3;
 const PALETTE_GLOW = 5;
 const PALETTE_GLOW_SUBDUED = 6;
 const PALETTE_SYMERROR = 3;
+const PALETTE_CRIM_BG = 7;
+const PALETTE_CRIM_TEXT = 7;
+const PALETTE_CRIM_BAR = 8;
+const PALETTE_CRIM_KNOWLEDGE_BAR = 9;
+const PALETTE_CRIM_BORDER = 10;
+const PALETTE_CRIM_CARD = 11;
 
 const style_eval = fontStyle(null, {
   color: 0xFFFFFFff,
@@ -149,8 +175,82 @@ const power_buf = new Uint8Array(AREA_CANVAS_W * AREA_CANVAS_W);
 const power_buf2 = new Uint8Array(AREA_CANVAS_W * AREA_CANVAS_W);
 const power_todo = new Uint32Array(AREA_CANVAS_W * AREA_CANVAS_W);
 
+let rand = randCreate(1);
+
 type EvalType = 'components' | 'ink' | 'symmetry' | 'cells' | 'power';
 type Evaluation = Record<EvalType, number>;
+type DemonTarget = {
+  // gen-time
+  color: Vec4;
+  name: string;
+  value: number;
+  knowledge_points: number[];
+  knowledge_ordering: EvalType[];
+
+  // run-time
+  min_found: number;
+  max_found: number;
+  knowledge: number;
+} & Record<EvalType, number>;
+let ranges: Record<EvalType, [number, number]> = {
+  components: [1, 40],
+  ink: [25, 450],
+  cells: [1, 50],
+  symmetry: [0, 100],
+  power: [5, 100],
+};
+function randFromRange(range: [number, number]): number {
+  return range[0] + rand.range(range[1] - range[0] + 1);
+}
+function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
+
+  let components = randFromRange(ranges.components);
+  let ink = randFromRange(ranges.ink);
+  let cells = randFromRange(ranges.cells);
+  let symmetry = randFromRange(ranges.symmetry);
+  let power = randFromRange(ranges.power);
+
+  let knowledge_points = [20, 40, 60, 80, 100];
+  for (let ii = 0; ii < knowledge_points.length - 1; ++ii) {
+    knowledge_points[ii] += rand.range(19) - 9;
+  }
+  let knowledge_ordering: EvalType[] = ['components', 'ink', 'symmetry', 'cells', 'power'];
+  shuffleArray(rand, knowledge_ordering);
+  let value = 100 + rand.range(901);
+
+  let name;
+  while (true) {
+    name = randomDemonName(rand);
+    let found = false;
+    for (let ii = 0; ii < existing.length; ++ii) {
+      if (existing[ii].color === name[1]) {
+        found = true;
+      } else if (existing[ii].name.endsWith(name[0].split(' ')[1])) {
+        found = true;
+      }
+    }
+    if (!found) {
+      break;
+    }
+  }
+
+  return {
+    name: name[0],
+    color: name[1],
+    components,
+    ink,
+    cells,
+    symmetry,
+    power,
+    value,
+    knowledge_points,
+    knowledge_ordering,
+
+    min_found: 123,
+    max_found: 195,
+    knowledge: 0.7,
+  };
+}
 class GameState {
   circles: number[] = [8];
   lines: [number, number, number, number][] = [[0, 5, 0, 20]];
@@ -162,7 +262,9 @@ class GameState {
     symcount: number;
     symmax: number;
   };
-  constructor() {
+  targets: DemonTarget[];
+  constructor(seed: number) {
+    rand.reseed(seed);
     if (engine.DEBUG) {
       let saved = localStorageGetJSON<DataObject>('state');
       if (saved) {
@@ -179,6 +281,13 @@ class GameState {
       }
     }
     this.evaluate();
+
+    let targets: DemonTarget[] = [];
+    let num_demons = 5; // 2 + level index?
+    for (let ii = 0; ii < num_demons; ++ii) {
+      targets.push(randomDemonTarget(targets));
+    }
+    this.targets = targets;
   }
   commit(): void {
     localStorageSetJSON('state', this.toJSON());
@@ -574,9 +683,19 @@ let font: Font;
 
 let game_state: GameState;
 let sprite_runes: Sprite;
+let sprite_bar_border: Sprite;
+let sprite_bar_fill: Sprite;
+let sprite_bar_marker: Sprite;
 function init(): void {
-  game_state = new GameState();
+  game_state = new GameState(1234);
   sprite_runes = autoAtlas('runes', 'def');
+  sprite_bar_border = autoAtlas('misc', 'bar_border');
+  sprite_bar_fill = autoAtlas('misc', 'bar_fill');
+  sprite_bar_marker = autoAtlas('misc', 'marker').withOrigin(vec2(0.5, 0));
+  markdownImageRegister('gp', {
+    sprite: autoAtlas('misc', 'gp'),
+    frame: 0,
+  });
 }
 
 function circAngleToXY(circ: number, ang: number): [number, number] {
@@ -661,6 +780,151 @@ const RUNE_W = POWER_R * 1.5;
 
 const EVAL_W = 200;
 const PAD = 8;
+const DEMON_W = 364;
+const DEMON_H = 203;
+const DEMON_BORDER = 3;
+const DEMON_KNOW_BAR = 18;
+const style_crim_text = fontStyle(null, {
+  color: font_palette[PALETTE_CRIM_TEXT],
+  glow_color: font_palette[PALETTE_CRIM_BG] & 0xFFFFFF00 | 0x50,
+  glow_xoffs: 2.5,
+  glow_yoffs: 2.5,
+  glow_inner: 0,
+  glow_outer: 4,
+});
+const style_eval_target = fontStyle(null, {
+  color: font_palette[PALETTE_CRIM_TEXT],
+  glow_color: font_palette[PALETTE_CRIM_CARD],
+  glow_inner: 0,
+  glow_outer: 5,
+});
+function drawDemons(): void {
+  const { targets } = game_state;
+  const x0 = game_width - PAD - DEMON_W;
+  let y = PAD * 2;
+  for (let ii = 0; ii < targets.length; ++ii) {
+    let target = targets[ii];
+    let z = Z.DEMON;
+    // border
+    drawRect(x0, y, x0 + DEMON_W, y + DEMON_H, z, palette[PALETTE_CRIM_BORDER]);
+    z++;
+    // light bg
+    drawRect(x0 + DEMON_BORDER, y + DEMON_BORDER, x0 + DEMON_W - DEMON_BORDER,
+      y + DEMON_H - DEMON_BORDER,
+      z, palette[PALETTE_CRIM_CARD]);
+    z++;
+    // knowledge bar bg
+    let know_bar = {
+      x: x0 + DEMON_BORDER,
+      y: y + DEMON_H - DEMON_KNOW_BAR - DEMON_BORDER,
+      z,
+      w: DEMON_W - DEMON_BORDER * 2,
+      h: DEMON_KNOW_BAR,
+      color: palette[PALETTE_CRIM_BG],
+    };
+    if (target.knowledge !== 1) {
+      drawRect2(know_bar);
+    }
+    z++;
+    // knowledge bar progress
+    if (target.knowledge) {
+      let offs = know_bar.w * (1 - target.knowledge);
+      know_bar.w -= offs;
+      know_bar.color = palette[PALETTE_CRIM_KNOWLEDGE_BAR];
+      drawRect2(know_bar);
+    }
+    z++;
+    // border between bar and bg
+    drawLine(x0+1, know_bar.y-0.5, x0 + DEMON_W -1, know_bar.y-0.5, z, 1, 1, palette[PALETTE_CRIM_BORDER]);
+
+    markdownAuto({
+      x: x0 + 10,
+      y: y + 10,
+      z,
+      text_height: 20,
+      font_style: style_crim_text,
+      text: target.name,
+    });
+
+    markdownAuto({
+      x: x0,
+      y: y + 10,
+      w: DEMON_W - 10,
+      z,
+      text_height: 20,
+      align: ALIGN.HRIGHT,
+      font_style: style_crim_text,
+      text: `${target.min_found ? `≈${round((target.min_found + target.max_found)/2)}` : '?'}[img=gp]`,
+    });
+
+    let yy = y + 31;
+    const EVAL_BAR_H = 28;
+    const EVAL_BAR_W = 160;
+    let bar_x = x0 + DEMON_W - DEMON_BORDER - 2 - EVAL_BAR_W;
+    let text_x = x0 + 148;
+
+    for (let jj = 0; jj < EVALS.length; ++jj) {
+      let eval_type = EVALS[jj][0];
+      let label = EVALS[jj][1];
+      font.draw({
+        style: style_crim_text,
+        x: text_x,
+        y: yy,
+        z,
+        size: 20,
+        h: EVAL_BAR_H,
+        align: ALIGN.VCENTER,
+        text: label === 'Cells' ? 'Cell' : label.slice(0, 3),
+      });
+      let value = target[eval_type];
+      let range = ranges[eval_type];
+      let p = (value - range[0]) / (range[1] - range[0]);
+      if (p) {
+        drawHBox({
+          x: bar_x - 1,
+          y: yy - 1,
+          z: z - 0.5,
+          w: (EVAL_BAR_W + 2) * p,
+          h: EVAL_BAR_H + 2,
+        }, sprite_bar_fill, palette[PALETTE_CRIM_BAR]);
+      }
+      font.draw({
+        style: style_eval_target,
+        x: bar_x,
+        y: yy,
+        z: z + 0.5,
+        w: EVAL_BAR_W,
+        h: EVAL_BAR_H,
+        size: 18,
+        align: ALIGN.HVCENTER,
+        text: `${value}`,
+      });
+      let my_p = clamp((game_state.evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
+      let my_marker_x = clamp(bar_x + EVAL_BAR_W * my_p, bar_x + 3, bar_x + EVAL_BAR_W - 3);
+      sprite_bar_marker.draw({
+        x: my_marker_x,
+        y: yy,
+        z: z + 0.75,
+        w: 11/2,
+        h: 10/2,
+        color: palette[PALETTE_CRIM_BORDER],
+      });
+      drawLine(my_marker_x, yy, my_marker_x, yy + EVAL_BAR_H, z + 0.75, 1, 1, palette[PALETTE_CRIM_BORDER]);
+
+      drawHBox({
+        x: bar_x - 1,
+        y: yy - 1,
+        z,
+        w: EVAL_BAR_W + 2,
+        h: EVAL_BAR_H + 2,
+      }, sprite_bar_border, palette[PALETTE_CRIM_BG]);
+      yy += EVAL_BAR_H + 2;
+    }
+
+    y += DEMON_H + PAD;
+  }
+}
+
 let mouse_pos = vec2();
 let was_drag = false;
 function statePlay(dt: number): void {
@@ -680,9 +944,9 @@ function statePlay(dt: number): void {
     }
     let text_h = font.draw({
       style: style_eval,
-      x: xx,
+      x: xx - EVAL_W * 0.5,
       y: 10,
-      w: EVAL_W,
+      w: EVAL_W * 2,
       align: ALIGN.HCENTER | ALIGN.HWRAP,
       text: `${pair[1]}\n${round(v)}${extra}`,
     });
@@ -732,6 +996,8 @@ function statePlay(dt: number): void {
   tex2_transform[1] = -camera2d.hReal() / area_canvas_size;
   tex2_transform[2] = -((MC_XC - area_canvas_size / 2) - camera2d.x0Real()) / area_canvas_size;
   tex2_transform[3] = 1 + ((camera2d.y1Real() - (MC_YC + area_canvas_size / 2)) / area_canvas_size);
+
+  drawDemons();
 
   let do_hover = mouseOver({
     x: MC_X0 - PAD, y: MC_Y0 - PAD,
@@ -1057,23 +1323,11 @@ export function main(): void {
     netInit({ engine });
   }
 
-  const font_info_04b03x2 = require('./img/font/04b03_8x2.json');
-  const font_info_04b03x1 = require('./img/font/04b03_8x1.json');
-  const font_info_palanquin32 = require('./img/font/palanquin32.json');
+  const font_info_ld55 = require('./img/font/ld55.json');
   let pixely = 'off';
-  let font_def;
+  let font_def = { info: font_info_ld55, texture: 'font/ld55' };
   let ui_sprites;
   let pixel_perfect = 0;
-  if (pixely === 'strict') {
-    font_def = { info: font_info_04b03x1, texture: 'font/04b03_8x1' };
-    ui_sprites = spriteSetGet('pixely');
-    pixel_perfect = 1;
-  } else if (pixely && pixely !== 'off') {
-    font_def = { info: font_info_04b03x2, texture: 'font/04b03_8x2' };
-    ui_sprites = spriteSetGet('pixely');
-  } else {
-    font_def = { info: font_info_palanquin32, texture: 'font/palanquin32' };
-  }
 
   effects.registerShader('glow_merge', {
     fp: 'shaders/effects_glow_merge.fp',
