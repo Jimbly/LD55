@@ -15,8 +15,9 @@ const adj: [string, Vec4][] = [
 ];
 const nadj = adj.length;
 const noun = [
-  'Wrath', 'Vengeance', 'Anger', 'Feaster', 'Pride', 'Lust', 'Gluttony', 'Avarice',
+  'Wrath', 'Vengeance', 'Anger', 'Feast', 'Pride', 'Lust', 'Gluttony', 'Avarice',
   'Hate', 'Whimsy', 'Sloth', 'Greed', 'Desire', 'Decay', 'Rot', 'Wretch', 'Scum',
+  'Riot',
 ];
 let nnoun = noun.length;
 

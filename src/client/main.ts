@@ -532,7 +532,7 @@ class GameState {
     this.area_tex_dirty = true;
     this.power_tex_dirty = true;
 
-    return [ret, powered/(powered + unpowered) * 100];
+    return [ret, powered ? powered/(powered + unpowered) * 100 : 0];
   }
 
   getCellSprite(): Sprite | null {
@@ -695,7 +695,7 @@ class GameState {
         is_sym = true;
         break;
       }
-      if (!is_sym) {
+      if (!is_sym && a0 !== mirror(a0)) {
         // horizontal symmetry
         let test1 = [c0, mirror(a0)];
         if (all_power[test1.join(',')]) {
@@ -903,7 +903,11 @@ function drawDemons(): void {
       text_height: 20,
       align: ALIGN.HRIGHT,
       font_style: style_crim_text,
-      text: `${target.min_found ? `≈${round((target.min_found + target.max_found)/2)}` : '?'}[img=gp]`,
+      text: `${target.knowledge === 1 ?
+        `${target.value}` :
+        target.min_found ?
+          `≈${round((target.min_found + target.max_found)/2)}` :
+          '?'}[img=gp]`,
     });
 
     drawRect(x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y,
@@ -954,8 +958,9 @@ function drawDemons(): void {
             x: bar_x - 1,
             y: yy - 1,
             z: z - 0.5,
-            w: (EVAL_BAR_W + 2) * p,
+            w: (EVAL_BAR_W) * p + 3,
             h: EVAL_BAR_H + 2,
+            no_min_width: true,
           }, sprite_bar_fill, palette[PALETTE_CRIM_BAR]);
         }
         value_str = `${value}`;
@@ -1001,11 +1006,12 @@ function drawDemons(): void {
 
 let mouse_pos = vec2();
 let was_drag = false;
+let highlight_symmetry_toggle = false;
 function statePlay(dt: number): void {
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
   let { circles, lines, power, placing } = game_state;
 
-  let highlight_symmetry = false;
+  let highlight_symmetry = highlight_symmetry_toggle;
   let highlight_cells = false;
   let highlight_power = false;
   let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
@@ -1013,8 +1019,21 @@ function statePlay(dt: number): void {
     let pair = EVALS[ii];
     let v = game_state.evaluation[pair[0]];
     let extra = '';
+    let label = pair[1];
     if (pair[0] === 'symmetry') {
       extra = `\n${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
+      if (inputClick({
+        x: xx,
+        y: 10,
+        w: EVAL_W,
+        h: uiTextHeight() * 3,
+      })) {
+        playUISound('button_click');
+        highlight_symmetry_toggle = !highlight_symmetry_toggle;
+      }
+      if (highlight_symmetry_toggle) {
+        label = `[${label}]`;
+      }
     }
     let text_h = font.draw({
       style: style_eval,
@@ -1022,7 +1041,7 @@ function statePlay(dt: number): void {
       y: 10,
       w: EVAL_W * 2,
       align: ALIGN.HCENTER | ALIGN.HWRAP,
-      text: `${pair[1]}\n${round(v)}${extra}`,
+      text: `${label}\n${round(v)}${extra}`,
     });
     if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') && mouseOver({
       x: xx,
@@ -1074,15 +1093,15 @@ function statePlay(dt: number): void {
   drawDemons();
 
   let do_hover = mouseOver({
-    x: MC_X0 - PAD, y: MC_Y0 - PAD,
-    w: MC_W + PAD, h: MC_W + PAD,
+    x: MC_X0 - PAD*4, y: MC_Y0 - PAD*4,
+    w: MC_W + PAD*8, h: MC_W + PAD*8,
     peek: true,
   });
   mousePos(mouse_pos);
   let drag;
   if (do_hover) {
     drag = inputDrag({
-      min_dist: MC_R / CIRCLE_STEPS,
+      //min_dist: MC_R / CIRCLE_STEPS * 0.75,
     });
   }
 
@@ -1111,7 +1130,9 @@ function statePlay(dt: number): void {
     drawCircleAA(MC_XC, MC_YC, Z.CIRCLES, r, LINE_W, 1, palette[PALETTE_CIRCLE]);
 
     let circle_cursor_dist = abs(center_cursor_dist - r);
-    if (circle_cursor_dist < cursor_circle_dist) {
+    if (circle_cursor_dist < cursor_circle_dist &&
+      circle_cursor_dist < CIRCLE_INTERACT_DIST
+    ) {
       cursor_circle_dist = circle_cursor_dist;
       cursor_circle = ii;
     }
@@ -1126,6 +1147,15 @@ function statePlay(dt: number): void {
       }
     }
   }
+
+  if (drag) {
+    if (drag_start_circle === cursor_circle && drag_start_angle === cursor_angle && !was_drag) {
+      drag = null;
+      drag_start_circle = -1;
+    }
+  }
+
+
   for (let ii = 0; ii < lines.length; ++ii) {
     let line = lines[ii];
     let [x0, y0] = circAngleToXY(line[0], line[1]);
@@ -1137,17 +1167,20 @@ function statePlay(dt: number): void {
     let pow = power[ii];
     let [x, y] = circAngleToXY(pow[0], pow[1]);
     drawCircle(x, y, Z.POWER, POWER_R, 1, palette[PALETTE_BG]);
-    let pal = highlight_symmetry && !game_state.symmap.power[ii] ? PALETTE_SYMERROR : PALETTE_POWER;
-    drawCircleAA(x, y, Z.POWER + 0.1, POWER_R, LINE_W, 1, palette[pal]);
-    sprite_runes.draw({
-      x: x - RUNE_W/2,
-      y: y - RUNE_W/2,
-      z: Z.RUNES,
-      w: RUNE_W,
-      h: RUNE_W,
-      frame: (circles[pow[0]] * ANGLE_STEPS + pow[1]) % (sprite_runes.uidata!.rects as Array<Vec4>).length,
-      color: palette[pal],
-    });
+    let symerror = highlight_symmetry && !game_state.symmap.power[ii];
+    let pal = symerror ? PALETTE_SYMERROR : PALETTE_POWER;
+    drawCircleAA(x, y, Z.POWER + (symerror ? 0.15 : 0.1), POWER_R, LINE_W, 1, palette[pal]);
+    if (!highlight_cells) {
+      sprite_runes.draw({
+        x: x - RUNE_W/2,
+        y: y - RUNE_W/2,
+        z: Z.RUNES,
+        w: RUNE_W,
+        h: RUNE_W,
+        frame: (circles[pow[0]] * ANGLE_STEPS + pow[1]) % (sprite_runes.uidata!.rects as Array<Vec4>).length,
+        color: palette[pal],
+      });
+    }
   }
 
   let right_click: [string, VoidFunc] | null = null;
@@ -1346,8 +1379,10 @@ function statePlay(dt: number): void {
       text: `Left-click: ${left_click[0]}`,
     });
     if (inputClick({ button: 0 })) {
-      playUISound('button_click');
-      left_click[1]();
+      if (left_click[1] !== nop) {
+        playUISound('button_click');
+        left_click[1]();
+      }
       game_state.commit();
     }
   }
@@ -1365,8 +1400,10 @@ function statePlay(dt: number): void {
       // game_state.commit();
     }
     if (was_drag && !drag && drag_stop) {
-      playUISound('button_click');
-      drag_stop[1]();
+      if (drag_stop[1] !== nop) {
+        playUISound('button_click');
+        drag_stop[1]();
+      }
       game_state.commit();
     }
   }
