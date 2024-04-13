@@ -210,9 +210,9 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
   let symmetry = randFromRange(ranges.symmetry);
   let power = randFromRange(ranges.power);
 
-  let knowledge_points = [20, 40, 60, 80, 100];
+  let knowledge_points = [0.2, 0.4, 0.6, 0.8, 1];
   for (let ii = 0; ii < knowledge_points.length - 1; ++ii) {
-    knowledge_points[ii] += rand.range(19) - 9;
+    knowledge_points[ii] += (rand.range(19) - 9) / 100;
   }
   let knowledge_ordering: EvalType[] = ['components', 'ink', 'symmetry', 'cells', 'power'];
   shuffleArray(rand, knowledge_ordering);
@@ -246,11 +246,55 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
     knowledge_points,
     knowledge_ordering,
 
-    min_found: 123,
-    max_found: 195,
-    knowledge: 0.7,
+    min_found: 0,
+    max_found: 0,
+    knowledge: 1,
   };
 }
+
+const MATCH_PERFECT = 0.05;
+
+function evalKnown(demon: DemonTarget, eval_type: EvalType): boolean {
+  for (let ii = 0; ii < demon.knowledge_ordering.length; ++ii) {
+    if (demon.knowledge_ordering[ii] === eval_type) {
+      return demon.knowledge_points[ii] <= demon.knowledge;
+    }
+  }
+  return false;
+}
+
+function evalMatch(evaluation: Evaluation, demon: DemonTarget): [number, number] | null {
+  let min_match = 0;
+  let max_match = 0;
+  let any_known = false;
+  for (let ii = 0; ii < demon.knowledge_ordering.length; ++ii) {
+    let eval_type = demon.knowledge_ordering[ii];
+    let is_known = demon.knowledge_points[ii] <= demon.knowledge;
+    if (!is_known) {
+      min_match += 1;
+      max_match += 100;
+    } else {
+      any_known = true;
+      let range = ranges[eval_type];
+      let my_v = clamp((evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
+      let desired_v = (demon[eval_type] - range[0]) / (range[1] - range[0]);
+      let match = abs(my_v - desired_v); // 0...1
+      if (match < MATCH_PERFECT) {
+        match = 100;
+      } else {
+        match = 1 - (match - MATCH_PERFECT) / (1 - MATCH_PERFECT);
+        match = round(match * match * 100);
+      }
+      min_match += match;
+      max_match += match;
+    }
+  }
+  if (!any_known) {
+    return null;
+  }
+  return [round(min_match / 5), round(max_match / 5)];
+}
+
 class GameState {
   circles: number[] = [8];
   lines: [number, number, number, number][] = [[0, 5, 0, 20]];
@@ -783,7 +827,12 @@ const PAD = 8;
 const DEMON_W = 364;
 const DEMON_H = 203;
 const DEMON_BORDER = 3;
+const DEMON_PORTRAIT_W = 138;
+const DEMON_PORTRAIT_X = 8;
+const DEMON_PORTRAIT_Y = 37;
 const DEMON_KNOW_BAR = 18;
+const EVAL_BAR_H = 26;
+const EVAL_BAR_W = 160;
 const style_crim_text = fontStyle(null, {
   color: font_palette[PALETTE_CRIM_TEXT],
   glow_color: font_palette[PALETTE_CRIM_BG] & 0xFFFFFF00 | 0x50,
@@ -857,9 +906,26 @@ function drawDemons(): void {
       text: `${target.min_found ? `≈${round((target.min_found + target.max_found)/2)}` : '?'}[img=gp]`,
     });
 
-    let yy = y + 31;
-    const EVAL_BAR_H = 28;
-    const EVAL_BAR_W = 160;
+    drawRect(x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y,
+      x0 + DEMON_PORTRAIT_X + DEMON_PORTRAIT_W,
+      y + DEMON_PORTRAIT_Y + DEMON_PORTRAIT_W,
+      z - 0.5,
+      [0,0,0,1]); // TODO: needs to be actual hole
+    let match = evalMatch(game_state.evaluation, target);
+    if (match) {
+      font.draw({
+        x: x0 + DEMON_PORTRAIT_X,
+        y: y + DEMON_PORTRAIT_Y,
+        z: z,
+        w: DEMON_PORTRAIT_W,
+        h: DEMON_PORTRAIT_W - 2,
+        size: 16,
+        align: ALIGN.HCENTER | ALIGN.VBOTTOM,
+        text: `${match[0] === match[1] ? match[0] : `${match[0]}-${match[1]}`}% match`,
+      });
+    }
+
+    let yy = y + 32;
     let bar_x = x0 + DEMON_W - DEMON_BORDER - 2 - EVAL_BAR_W;
     let text_x = x0 + 148;
 
@@ -876,17 +942,24 @@ function drawDemons(): void {
         align: ALIGN.VCENTER,
         text: label === 'Cells' ? 'Cell' : label.slice(0, 3),
       });
-      let value = target[eval_type];
       let range = ranges[eval_type];
-      let p = (value - range[0]) / (range[1] - range[0]);
-      if (p) {
-        drawHBox({
-          x: bar_x - 1,
-          y: yy - 1,
-          z: z - 0.5,
-          w: (EVAL_BAR_W + 2) * p,
-          h: EVAL_BAR_H + 2,
-        }, sprite_bar_fill, palette[PALETTE_CRIM_BAR]);
+      let my_p = clamp((game_state.evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
+      let am_close = false;
+      let value_str = '?';
+      if (evalKnown(target, eval_type)) {
+        let value = target[eval_type];
+        let p = (value - range[0]) / (range[1] - range[0]);
+        if (p) {
+          drawHBox({
+            x: bar_x - 1,
+            y: yy - 1,
+            z: z - 0.5,
+            w: (EVAL_BAR_W + 2) * p,
+            h: EVAL_BAR_H + 2,
+          }, sprite_bar_fill, palette[PALETTE_CRIM_BAR]);
+        }
+        value_str = `${value}`;
+        am_close = abs(p - my_p) < MATCH_PERFECT;
       }
       font.draw({
         style: style_eval_target,
@@ -896,20 +969,21 @@ function drawDemons(): void {
         w: EVAL_BAR_W,
         h: EVAL_BAR_H,
         size: 18,
+        alpha: value_str === '?' ? 0.25 : 1,
         align: ALIGN.HVCENTER,
-        text: `${value}`,
+        text: value_str,
       });
-      let my_p = clamp((game_state.evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
       let my_marker_x = clamp(bar_x + EVAL_BAR_W * my_p, bar_x + 3, bar_x + EVAL_BAR_W - 3);
+      let marker_pal = am_close ? PALETTE_CRIM_KNOWLEDGE_BAR : PALETTE_CRIM_BORDER;
       sprite_bar_marker.draw({
         x: my_marker_x,
         y: yy,
         z: z + 0.75,
         w: 11/2,
         h: 10/2,
-        color: palette[PALETTE_CRIM_BORDER],
+        color: palette[marker_pal],
       });
-      drawLine(my_marker_x, yy, my_marker_x, yy + EVAL_BAR_H, z + 0.75, 1, 1, palette[PALETTE_CRIM_BORDER]);
+      drawLine(my_marker_x, yy, my_marker_x, yy + EVAL_BAR_H, z + 0.75, 2, 1, palette[marker_pal], 0);
 
       drawHBox({
         x: bar_x - 1,
@@ -918,7 +992,7 @@ function drawDemons(): void {
         w: EVAL_BAR_W + 2,
         h: EVAL_BAR_H + 2,
       }, sprite_bar_border, palette[PALETTE_CRIM_BG]);
-      yy += EVAL_BAR_H + 2;
+      yy += EVAL_BAR_H + 4;
     }
 
     y += DEMON_H + PAD;
