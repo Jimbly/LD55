@@ -1,3 +1,4 @@
+/* globals CanvasRenderingContext2D, HTMLCanvasElement */
 /*eslint global-require:off*/
 // eslint-disable-next-line import/order
 const local_storage = require('glov/client/local_storage');
@@ -22,10 +23,15 @@ import {
 import { localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
 import { netInit } from 'glov/client/net';
 import { spriteSetGet } from 'glov/client/sprite_sets';
-// import {
-//   Sprite,
-//   spriteCreate,
-// } from 'glov/client/sprites';
+import {
+  Sprite,
+  Texture,
+  spriteCreate,
+} from 'glov/client/sprites';
+import {
+  TEXTURE_FORMAT,
+  textureLoad,
+} from 'glov/client/textures';
 import {
   LINE_CAP_ROUND,
   drawCircle,
@@ -49,7 +55,7 @@ import {
 } from 'glov/common/vmath';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const { PI, abs, atan2, cos, max, min, round, sin, sqrt } = Math;
+const { PI, abs, atan2, cos, floor, max, min, round, sin, sqrt } = Math;
 
 window.Z = window.Z || {};
 Z.BACKGROUND = 1;
@@ -99,6 +105,10 @@ const LINE_W = 8;
 const LINE_W_DELETE = 4;
 const POWER_R = 50;
 
+const VIS_MAXR = MC_R + POWER_R + LINE_W/2;
+const AREA_CANVAS_W = 512;
+const VIS_TO_CANVAS_SCALE = 1 / VIS_MAXR * AREA_CANVAS_W / 2;
+
 const CIRCLE_STEPS = 12;
 const ANGLE_STEPS = 48;
 const CIRCLE_MIN = 4;
@@ -128,7 +138,7 @@ function mirror(a: number): number {
   return (ANGLE_STEPS - a) % ANGLE_STEPS;
 }
 
-type EvalType = 'components' | 'ink' | 'symmetry';
+type EvalType = 'components' | 'ink' | 'symmetry' | 'areas';
 type Evaluation = Record<EvalType, number>;
 class GameState {
   circles: number[] = [8];
@@ -169,6 +179,154 @@ class GameState {
       lines: this.lines,
       power: this.power,
     };
+  }
+
+  area_canvas: HTMLCanvasElement | null = null;
+  area_ctx: CanvasRenderingContext2D | null = null;
+  area_tex_dirty = false;
+  area_tex: Texture | null = null;
+  area_sprite: Sprite | null = null;
+  area_img_data?: Uint8ClampedArray;
+  evaluateAreas(): number {
+    let canvas = this.area_canvas;
+    const w = AREA_CANVAS_W;
+    const center = w / 2;
+    const CANVAS_R = VIS_TO_CANVAS_SCALE * MC_R;
+    if (!canvas) {
+      canvas = this.area_canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = w;
+      this.area_ctx = canvas.getContext('2d');
+    }
+    let ctx = this.area_ctx;
+    assert(ctx);
+    ctx.fillStyle = '#020';
+    ctx.fillRect(0, 0, w, w);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = VIS_TO_CANVAS_SCALE * LINE_W / 2;
+
+    let { circles, lines, power } = this;
+    for (let ii = 0; ii < circles.length; ++ii) {
+      let r = circles[ii];
+      ctx.beginPath();
+      ctx.arc(center, center, CANVAS_R * r / CIRCLE_STEPS, 0, 2 * PI);
+      ctx.stroke();
+    }
+
+    function circAngleToXY2(circ: number, ang: number): [number, number] {
+      let r = circles[circ] / CIRCLE_STEPS;
+      ang = ang / ANGLE_STEPS * 2 * PI;
+      return [
+        center + sin(ang) * r * CANVAS_R,
+        center + cos(ang) * r * CANVAS_R,
+      ];
+    }
+
+    for (let ii = 0; ii < lines.length; ++ii) {
+      let line = lines[ii];
+      let [x0, y0] = circAngleToXY2(line[0], line[1]);
+      let [x1, y1] = circAngleToXY2(line[2], line[3]);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+    }
+
+    for (let ii = 0; ii < power.length; ++ii) {
+      let pow = power[ii];
+      let [x, y] = circAngleToXY2(pow[0], pow[1]);
+      ctx.beginPath();
+      ctx.arc(x, y, POWER_R * VIS_TO_CANVAS_SCALE, 0, PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    let img_data = ctx.getImageData(0, 0, w, w).data;
+    for (let yy = 0, outi=0, ini=0; yy < w; ++yy) {
+      for (let xx = 0; xx < w; ++xx, ++outi, ini+=4) {
+        let v = img_data[ini] > 127 ? 255 : 0;
+        if (!xx || !yy || xx === w - 1 || yy === w - 1) {
+          v = 255;
+        }
+        img_data[outi] = v;
+      }
+    }
+
+    // count areas
+    function fill(x: number, y: number, oldv: number, v: number): number {
+      let count = 0;
+      let todo: number[] = [];
+      function queue(idx: number): void {
+        if (img_data[idx] === oldv) {
+          ++count;
+          img_data[idx] = v;
+          todo.push(idx);
+        }
+      }
+      queue(x + y * w);
+      while (todo.length) {
+        let idx = todo.pop()!;
+        queue(idx - 1);
+        queue(idx + 1);
+        queue(idx - w);
+        queue(idx + w);
+      }
+      return count;
+    }
+    // fill outside
+    fill(1,1, 0, 16);
+    fill(1,w-2, 0, 16);
+    fill(w-2,w-2, 0, 16);
+    fill(w-2,1, 0, 16);
+    let ret = 0;
+    for (let yy = 0, idx=0; yy < w; ++yy) {
+      for (let xx = 0; xx < w; ++xx, ++idx) {
+        if (!img_data[idx]) {
+          let v = 32 + ((ret * 77) % (256 - 64));
+          let count = fill(xx, yy, 0, v);
+          if (count > 3) {
+            ++ret;
+          } else {
+            fill(xx, yy, v, 255);
+          }
+        }
+      }
+    }
+
+    this.area_img_data = img_data;
+    this.area_tex_dirty = true;
+
+    return ret;
+  }
+
+  getAreaSprite(): Sprite | null {
+    if (this.area_tex_dirty) {
+      this.area_tex_dirty = false;
+
+      const w = AREA_CANVAS_W;
+      if (!this.area_tex) {
+        this.area_tex = textureLoad({
+          width: w,
+          height: w,
+          format: TEXTURE_FORMAT.R8,
+          name: 'area_eval',
+          data: this.area_img_data!,
+          filter_min: gl.NEAREST,
+          filter_mag: gl.NEAREST,
+        });
+      } else {
+        // @ts-expect-error TODO!
+        this.area_tex.updateData(w, w, this.area_img_data!);
+      }
+
+      if (!this.area_sprite) {
+        this.area_sprite = spriteCreate({
+          texs: [this.area_tex!],
+        });
+      }
+
+    }
+    return this.area_sprite;
   }
 
   evaluation!: Evaluation;
@@ -284,12 +442,15 @@ class GameState {
       }
       symmap.power.push(is_sym);
     }
-
     symmap.symcount = symmetry;
     symmap.symmax = symmax;
+
+    let areas = this.evaluateAreas();
+
     this.evaluation = {
       components,
       ink,
+      areas,
       symmetry: (symmax ? symmetry / symmax : 1) * 100,
     };
   }
@@ -373,6 +534,7 @@ const EVALS: [EvalType, string][] = [
   ['components', 'Components'],
   ['ink', 'Ink'],
   ['symmetry', 'Symmetry'],
+  ['areas', 'Areas'],
 ];
 
 const EVAL_W = 200;
@@ -384,7 +546,8 @@ function statePlay(dt: number): void {
   queuePostprocess();
   let { circles, lines, power, placing } = game_state;
 
-  let highlight_symmetry= false;
+  let highlight_symmetry = false;
+  let highlight_areas = false;
   let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
   for (let ii = 0; ii < EVALS.length; ++ii) {
     let pair = EVALS[ii];
@@ -401,15 +564,31 @@ function statePlay(dt: number): void {
       align: ALIGN.HCENTER | ALIGN.HWRAP,
       text: `${pair[1]}\n${round(v)}${extra}`,
     });
-    if (pair[0] === 'symmetry' && mouseOver({
+    if ((pair[0] === 'symmetry' || pair[0] === 'areas') && mouseOver({
       x: xx,
       y: 10,
       w: EVAL_W,
       h: text_h,
     })) {
-      highlight_symmetry = true;
+      if (pair[0] === 'symmetry') {
+        highlight_symmetry = true;
+      } else {
+        highlight_areas = !highlight_areas;
+      }
     }
     xx += EVAL_W + PAD;
+  }
+  if (highlight_areas) {
+    let area_sprite = game_state.getAreaSprite();
+    if (area_sprite) {
+      let canvas_size = AREA_CANVAS_W / VIS_TO_CANVAS_SCALE;
+      area_sprite.draw({
+        x: MC_XC - canvas_size / 2,
+        y: MC_YC - canvas_size / 2,
+        w: canvas_size,
+        h: canvas_size,
+      });
+    }
   }
 
   let do_hover = mouseOver({
