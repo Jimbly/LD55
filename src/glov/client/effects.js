@@ -490,6 +490,7 @@ export function applyGaussianBlur(params) {
     startup();
   }
   let source = framebufferEnd({ filter_linear: true });
+  params.framebuffer_source = source; // JAM
   let max_size = params.max_size || 512;
   let min_size = params.min_size || 128;
 

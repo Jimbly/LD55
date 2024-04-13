@@ -3,7 +3,10 @@
 const local_storage = require('glov/client/local_storage');
 local_storage.setStoragePrefix('ld55'); // Before requiring anything else that might load from this
 
+import * as effects from 'glov/client/effects';
+import { effectsQueue } from 'glov/client/effects';
 import * as engine from 'glov/client/engine';
+import { framebufferEnd } from 'glov/client/framebuffer';
 import {
   KEYS,
   inputClick,
@@ -47,7 +50,8 @@ Z.SPRITES = 10;
 Z.CIRCLES = 10;
 Z.LINES = 9;
 Z.POWER = 11;
-Z.HOVER = 12;
+Z.POSTPROCESS = 15;
+Z.HOVER = 20;
 
 // Virtual viewport for our game logic
 const game_width = 1920;
@@ -59,6 +63,7 @@ const palette = [
   vec4(0, 0, 0, 1),
   vec4(1, 0, 0, 1),
   vec4(0, 0, 1, 1),
+  vec4(196/255, 17/255, 255/255, 1),
 ];
 const PALETTE_CIRCLE = 0;
 const PALETTE_LINE = 0;
@@ -66,6 +71,7 @@ const PALETTE_POWER = 1;
 const PALETTE_BG = 2;
 const PALETTE_HOVER = 4;
 const PALETTE_HOVER_DELETE = 3;
+const PALETTE_GLOW = 5;
 
 const CIRCLE_STEPS = 12;
 const ANGLE_STEPS = 48;
@@ -128,6 +134,40 @@ function angleDiff(a: number, b: number): number {
   return d;
 }
 
+let this_frame_source: unknown;
+function doBlurEffect(factor: number): void {
+  let params = {
+    blur: factor,
+    glow: 1,
+    max_size: 1024,
+    min_size: 256,
+    framebuffer_source: null as unknown,
+  };
+  effects.applyGaussianBlur(params);
+  this_frame_source = params.framebuffer_source;
+}
+
+function doColorEffect(): void {
+  let params = {
+    color: palette[PALETTE_GLOW],
+  };
+  let source = [
+    this_frame_source,
+    framebufferEnd({ filter_linear: false, need_depth: false }),
+  ];
+  effects.applyCopy({
+    shader: 'glow_merge',
+    source,
+    params,
+  });
+}
+
+function queuePostprocess(): void {
+  let blur_factor = 1;
+  effectsQueue(Z.POSTPROCESS, doBlurEffect.bind(null, blur_factor));
+  effectsQueue(Z.POSTPROCESS + 1, doColorEffect);
+}
+
 const MODES: [Mode, string][] = [
   ['circle', 'O'],
   ['line', '/'],
@@ -138,6 +178,7 @@ const PAD = 8;
 let mouse_pos = vec2();
 function statePlay(dt: number): void {
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
+  queuePostprocess();
   let { circles, lines, power, mode, placing } = game_state;
 
   let button_height = uiButtonHeight();
@@ -362,6 +403,10 @@ export function main(): void {
   } else {
     font_def = { info: font_info_palanquin32, texture: 'font/palanquin32' };
   }
+
+  effects.registerShader('glow_merge', {
+    fp: 'shaders/effects_glow_merge.fp',
+  });
 
   if (!engine.startup({
     game_width,
