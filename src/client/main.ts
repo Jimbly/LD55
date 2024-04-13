@@ -36,7 +36,7 @@ import {
   setFontHeight,
   uiTextHeight,
 } from 'glov/client/ui';
-import { DataObject, VoidFunc } from 'glov/common/types';
+import { DataObject, TSMap, VoidFunc } from 'glov/common/types';
 import { nop, ridx } from 'glov/common/util';
 import {
   Vec4,
@@ -79,6 +79,7 @@ const PALETTE_BG = 2;
 const PALETTE_HOVER = 4;
 const PALETTE_HOVER_DELETE = 3;
 const PALETTE_GLOW = 5;
+const PALETTE_SYMERROR = 3;
 
 const style_eval = fontStyle(null, {
   color: 0xFFFFFFff,
@@ -101,15 +102,45 @@ const POWER_R = 50;
 const CIRCLE_STEPS = 12;
 const ANGLE_STEPS = 48;
 const CIRCLE_MIN = 4;
-// type Mode = 'line' | 'circle' | 'power';
-type EvalType = 'components' | 'ink';
+
+function canonicalLine(line: [number, number, number, number]): void {
+  if (line[1] < 0) {
+    line[1] += ANGLE_STEPS;
+  }
+  if (line[3] < 0) {
+    line[3] += ANGLE_STEPS;
+  }
+  if (line[0] > line[2]) {
+    let t = line[0];
+    line[0] = line[2];
+    line[2] = t;
+    t = line[1];
+    line[1] = line[3];
+    line[3] = t;
+  } else if (line[0] === line[2] && line[1] > line[3]) {
+    let t = line[1];
+    line[1] = line[3];
+    line[3] = t;
+  }
+}
+
+function mirror(a: number): number {
+  return (ANGLE_STEPS - a) % ANGLE_STEPS;
+}
+
+type EvalType = 'components' | 'ink' | 'symmetry';
 type Evaluation = Record<EvalType, number>;
 class GameState {
   circles: number[] = [8];
   lines: [number, number, number, number][] = [[0, 5, 0, 20]];
   power: [number, number][] = [[0, 15]];
-  // mode: Mode = 'line';
   placing: null | [number, number] = null;
+  symmap!: {
+    lines: boolean[];
+    power: boolean[];
+    symcount: number;
+    symmax: number;
+  };
   constructor() {
     if (engine.DEBUG) {
       let saved = localStorageGetJSON<DataObject>('state');
@@ -117,6 +148,13 @@ class GameState {
         this.circles = saved.circles as number[];
         this.lines = saved.lines as [number, number, number, number][];
         this.power = saved.power as [number, number][];
+        // fixup bad debug data
+        for (let ii = 0; ii < this.lines.length; ++ii) {
+          canonicalLine(this.lines[ii]);
+        }
+        for (let ii = 0; ii < this.power.length; ++ii) {
+          this.power[ii][1] = (this.power[ii][1] + ANGLE_STEPS) % ANGLE_STEPS;
+        }
       }
     }
     this.evaluate();
@@ -138,32 +176,121 @@ class GameState {
     let components = 0;
     let { circles, lines, power } = this;
     components += power.length;
+    this.symmap = {
+      lines: [],
+      power: [],
+      symmax: 0,
+      symcount: 0,
+    };
+    let symmap = this.symmap;
     let ink = 0;
+    let symmetry = 0;
+    let symmax = 0;
     for (let ii = 0; ii < circles.length; ++ii) {
       let r = circles[ii];
       ++components;
       ink += 2 * PI * r;
+    }
+    let all_lines: TSMap<true> = {};
+    for (let ii = 0; ii < lines.length; ++ii) {
+      all_lines[lines[ii].join(',')] = true;
     }
     for (let ii = 0; ii < lines.length; ++ii) {
       let [c0, a0, c1, a1] = lines[ii];
       ++components;
       let r0 = circles[c0];
       let r1 = circles[c1];
-      a0 = a0 / ANGLE_STEPS * 2 * PI;
-      a1 = a1 / ANGLE_STEPS * 2 * PI;
-      let x0 = sin(a0) * r0;
-      let y0 = cos(a0) * r0;
-      let x1 = sin(a1) * r1;
-      let y1 = cos(a1) * r1;
+      let a0r = a0 / ANGLE_STEPS * 2 * PI;
+      let a1r = a1 / ANGLE_STEPS * 2 * PI;
+      let x0 = sin(a0r) * r0;
+      let y0 = cos(a0r) * r0;
+      let x1 = sin(a1r) * r1;
+      let y1 = cos(a1r) * r1;
       ink += sqrt((x1 - x0)*(x1 - x0) + (y1 - y0) * (y1 - y0));
+
+      // check for symmetry
+      let is_sym = false;
+      // radial symmetry
+      for (let offs = 1; offs <= ANGLE_STEPS / 2; ++offs) {
+        let test1 = [c0, (a0 + offs) % ANGLE_STEPS, c1, (a1 + offs) % ANGLE_STEPS];
+        if (c0 === c1 && test1[1] > test1[3]) {
+          let t = test1[1];
+          test1[1] = test1[3];
+          test1[3] = t;
+        }
+        if (!all_lines[test1.join(',')]) {
+          continue;
+        }
+        test1[1] = (a0 - offs + ANGLE_STEPS) % ANGLE_STEPS;
+        test1[3] = (a1 - offs + ANGLE_STEPS) % ANGLE_STEPS;
+        if (c0 === c1 && test1[1] > test1[3]) {
+          let t = test1[1];
+          test1[1] = test1[3];
+          test1[3] = t;
+        }
+        if (!all_lines[test1.join(',')]) {
+          continue;
+        }
+        is_sym = true;
+        break;
+      }
+      if (!is_sym && c0 !== c1) {
+        // horizontal symmetry
+        let test1 = [c0, mirror(a0), c1, mirror(a1)];
+        if (all_lines[test1.join(',')]) {
+          is_sym = true;
+        }
+      }
+      ++symmax;
+      if (is_sym) {
+        ++symmetry;
+      }
+      symmap.lines.push(is_sym);
+    }
+    let all_power: TSMap<true> = {};
+    for (let ii = 0; ii < power.length; ++ii) {
+      all_power[power[ii].join(',')] = true;
     }
     for (let ii = 0; ii < power.length; ++ii) {
       ++components;
       ink += 3; // plus symbol?
+
+      // check for symmetry
+      let [c0, a0] = power[ii];
+      let is_sym = false;
+      // radial symmetry
+      for (let offs = 1; offs <= ANGLE_STEPS / 2; ++offs) {
+        let test1 = [c0, (a0 + offs) % ANGLE_STEPS];
+        if (!all_power[test1.join(',')]) {
+          continue;
+        }
+        test1[1] = (a0 - offs + ANGLE_STEPS) % ANGLE_STEPS;
+        if (!all_power[test1.join(',')]) {
+          continue;
+        }
+        is_sym = true;
+        break;
+      }
+      if (!is_sym) {
+        // horizontal symmetry
+        let test1 = [c0, mirror(a0)];
+        if (all_power[test1.join(',')]) {
+          is_sym = true;
+        }
+      }
+      ++symmax;
+      if (is_sym) {
+        ++symmetry;
+      }
+      symmap.power.push(is_sym);
     }
+
+    symmap.symcount = symmetry;
+    symmap.symmax = symmax;
     this.evaluation = {
       components,
       ink,
+      symmetry: (symmax ? symmetry / symmax : 1) * 100,
     };
   }
 }
@@ -242,15 +369,10 @@ function queuePostprocess(): void {
   effectsQueue(Z.POSTPROCESS + 1, doColorEffect);
 }
 
-// const MODES: [Mode, string][] = [
-//   ['circle', 'O'],
-//   ['line', '/'],
-//   ['power', 'P'],
-// ];
-
 const EVALS: [EvalType, string][] = [
   ['components', 'Components'],
   ['ink', 'Ink'],
+  ['symmetry', 'Symmetry'],
 ];
 
 const EVAL_W = 200;
@@ -262,37 +384,31 @@ function statePlay(dt: number): void {
   queuePostprocess();
   let { circles, lines, power, placing } = game_state;
 
-  // let button_height = uiButtonHeight();
-  // let xx = (game_width - MODES.length * (button_height + PAD) - PAD) / 2;
-  // for (let ii = 0; ii < MODES.length; ++ii) {
-  //   let pair = MODES[ii];
-  //   if (buttonText({
-  //     x: xx,
-  //     y: game_height - button_height,
-  //     w: button_height,
-  //     h: button_height,
-  //     text: pair[1],
-  //     disabled: mode === pair[0],
-  //     hotkey: KEYS['1'] + ii,
-  //   })) {
-  //     mode = game_state.mode = pair[0];
-  //     game_state.placing = null;
-  //   }
-  //   xx += button_height + PAD;
-  // }
-
+  let highlight_symmetry= false;
   let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
   for (let ii = 0; ii < EVALS.length; ++ii) {
     let pair = EVALS[ii];
     let v = game_state.evaluation[pair[0]];
-    font.draw({
+    let extra = '';
+    if (pair[0] === 'symmetry') {
+      extra = `\n${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
+    }
+    let text_h = font.draw({
       style: style_eval,
       x: xx,
       y: 10,
       w: EVAL_W,
       align: ALIGN.HCENTER | ALIGN.HWRAP,
-      text: `${pair[1]}\n${round(v)}`,
+      text: `${pair[1]}\n${round(v)}${extra}`,
     });
+    if (pair[0] === 'symmetry' && mouseOver({
+      x: xx,
+      y: 10,
+      w: EVAL_W,
+      h: text_h,
+    })) {
+      highlight_symmetry = true;
+    }
     xx += EVAL_W + PAD;
   }
 
@@ -313,6 +429,9 @@ function statePlay(dt: number): void {
 
   let center_cursor_dist = v2dist(mouse_pos, [MC_XC, MC_YC]);
   let cursor_angle = round(atan2(mouse_pos[0] - MC_XC, mouse_pos[1] - MC_YC) * ANGLE_STEPS / (2 * PI));
+  if (cursor_angle < 0) {
+    cursor_angle += ANGLE_STEPS;
+  }
   let cursor_circle = -1;
   let cursor_circle_dist = Infinity;
   let drag_start_center_cursor_dist = 0;
@@ -322,6 +441,9 @@ function statePlay(dt: number): void {
   if (drag) {
     drag_start_center_cursor_dist = v2dist(drag.start_pos, [MC_XC, MC_YC]);
     drag_start_angle = round(atan2(drag.start_pos[0] - MC_XC, drag.start_pos[1] - MC_YC) * ANGLE_STEPS / (2 * PI));
+    if (drag_start_angle < 0) {
+      drag_start_angle += ANGLE_STEPS;
+    }
   }
   for (let ii = 0; ii < circles.length; ++ii) {
     let r = circles[ii] / CIRCLE_STEPS * MC_R;
@@ -347,13 +469,15 @@ function statePlay(dt: number): void {
     let line = lines[ii];
     let [x0, y0] = circAngleToXY(line[0], line[1]);
     let [x1, y1] = circAngleToXY(line[2], line[3]);
-    drawLine(x0, y0, x1, y1, Z.LINES, LINE_W, 1, palette[PALETTE_LINE]);
+    let pal = highlight_symmetry && !game_state.symmap.lines[ii] ? PALETTE_SYMERROR : PALETTE_LINE;
+    drawLine(x0, y0, x1, y1, Z.LINES, LINE_W, 1, palette[pal]);
   }
   for (let ii = 0; ii < power.length; ++ii) {
     let pow = power[ii];
     let [x, y] = circAngleToXY(pow[0], pow[1]);
     drawCircle(x, y, Z.POWER, POWER_R, 1, palette[PALETTE_BG]);
-    drawCircleAA(x, y, Z.POWER + 0.1, POWER_R, LINE_W, 1, palette[PALETTE_POWER]);
+    let pal = highlight_symmetry && !game_state.symmap.power[ii] ? PALETTE_SYMERROR : PALETTE_POWER;
+    drawCircleAA(x, y, Z.POWER + 0.1, POWER_R, LINE_W, 1, palette[pal]);
   }
 
   let right_click: [string, VoidFunc] | null = null;
@@ -471,9 +595,7 @@ function statePlay(dt: number): void {
       let valid = true;
       if (placing) {
         line = [placing[0], placing[1], cursor_circle, cursor_angle];
-        if (line[0] > line[2] || line[0] === line[2] && line[1] > line[3]) {
-          line = [cursor_circle, cursor_angle, placing[0], placing[1]];
-        }
+        canonicalLine(line);
         if (cursor_circle === placing[0] && angleDiff(cursor_angle, placing[1]) < 5) {
           valid = false;
         }
