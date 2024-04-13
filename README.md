@@ -7,7 +7,7 @@ Ludum Dare 55 Entry by Jimbly - "Title TBD"
 * Using [Javascript libGlov/GLOV.js framework](https://github.com/Jimbly/glovjs)
 
 Acknowledgements:
-* [Perfect DOS VGA](https://www.dafont.com/perfect-dos-vga-437.font) font
+* [KHScala](https://www.dafont.com/khscala.font) font
 
 Start with: `npm start` (after running `npm i` once)
 

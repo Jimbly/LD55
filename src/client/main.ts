@@ -5,6 +5,8 @@ const local_storage = require('glov/client/local_storage');
 local_storage.setStoragePrefix('ld55'); // Before requiring anything else that might load from this
 
 import assert from 'assert';
+import { autoAtlas } from 'glov/client/autoatlas';
+import * as camera2d from 'glov/client/camera2d';
 import * as effects from 'glov/client/effects';
 import { effectsQueue } from 'glov/client/effects';
 import * as engine from 'glov/client/engine';
@@ -138,7 +140,12 @@ function mirror(a: number): number {
   return (ANGLE_STEPS - a) % ANGLE_STEPS;
 }
 
-type EvalType = 'components' | 'ink' | 'symmetry' | 'areas';
+const area_buf = new Uint8Array(AREA_CANVAS_W * AREA_CANVAS_W);
+const power_buf = new Uint8Array(AREA_CANVAS_W * AREA_CANVAS_W);
+const power_buf2 = new Uint8Array(AREA_CANVAS_W * AREA_CANVAS_W);
+const power_todo = new Uint32Array(AREA_CANVAS_W * AREA_CANVAS_W);
+
+type EvalType = 'components' | 'ink' | 'symmetry' | 'areas' | 'power';
 type Evaluation = Record<EvalType, number>;
 class GameState {
   circles: number[] = [8];
@@ -184,10 +191,12 @@ class GameState {
   area_canvas: HTMLCanvasElement | null = null;
   area_ctx: CanvasRenderingContext2D | null = null;
   area_tex_dirty = false;
+  power_tex_dirty = false;
   area_tex: Texture | null = null;
+  power_tex: Texture | null = null;
   area_sprite: Sprite | null = null;
-  area_img_data?: Uint8ClampedArray;
-  evaluateAreas(): number {
+  power_sprite: Sprite | null = null;
+  evaluateAreas(): [number, number] {
     let canvas = this.area_canvas;
     const w = AREA_CANVAS_W;
     const center = w / 2;
@@ -200,7 +209,7 @@ class GameState {
     }
     let ctx = this.area_ctx;
     assert(ctx);
-    ctx.fillStyle = '#020';
+    ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, w);
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = VIS_TO_CANVAS_SCALE * LINE_W / 2;
@@ -232,6 +241,7 @@ class GameState {
       ctx.stroke();
     }
 
+    ctx.fillStyle = '#ff0';
     for (let ii = 0; ii < power.length; ++ii) {
       let pow = power[ii];
       let [x, y] = circAngleToXY2(pow[0], pow[1]);
@@ -242,13 +252,21 @@ class GameState {
     }
 
     let img_data = ctx.getImageData(0, 0, w, w).data;
+    let power_todo_len = 0;
     for (let yy = 0, outi=0, ini=0; yy < w; ++yy) {
       for (let xx = 0; xx < w; ++xx, ++outi, ini+=4) {
         let v = img_data[ini] > 127 ? 255 : 0;
         if (!xx || !yy || xx === w - 1 || yy === w - 1) {
           v = 255;
         }
-        img_data[outi] = v;
+        area_buf[outi] = v;
+
+        let is_any = img_data[ini] > 0;
+        let is_power = v && img_data[ini + 2] < 127;
+        power_buf[outi] = is_power ? 255 : is_any ? 1 : 0;
+        if (is_power) {
+          power_todo[power_todo_len++] = outi;
+        }
       }
     }
 
@@ -257,9 +275,9 @@ class GameState {
       let count = 0;
       let todo: number[] = [];
       function queue(idx: number): void {
-        if (img_data[idx] === oldv) {
+        if (area_buf[idx] === oldv) {
           ++count;
-          img_data[idx] = v;
+          area_buf[idx] = v;
           todo.push(idx);
         }
       }
@@ -281,7 +299,7 @@ class GameState {
     let ret = 0;
     for (let yy = 0, idx=0; yy < w; ++yy) {
       for (let xx = 0; xx < w; ++xx, ++idx) {
-        if (!img_data[idx]) {
+        if (!area_buf[idx]) {
           let v = 32 + ((ret * 77) % (256 - 64));
           let count = fill(xx, yy, 0, v);
           if (count > 3) {
@@ -293,10 +311,71 @@ class GameState {
       }
     }
 
-    this.area_img_data = img_data;
-    this.area_tex_dirty = true;
+    let power_todo_walk = 0;
+    while (power_todo_walk < power_todo_len) {
+      let next = power_todo[power_todo_walk++];
+      let v = power_buf[next] - 2;
+      if (v <= 1) {
+        continue;
+      }
+      if (power_buf[next - 1] && power_buf[next - 1] < v) {
+        power_buf[next - 1] = v;
+        power_todo[power_todo_len++] = next - 1;
+      }
+      if (power_buf[next + 1] && power_buf[next + 1] < v) {
+        power_buf[next + 1] = v;
+        power_todo[power_todo_len++] = next + 1;
+      }
+      if (power_buf[next + w] && power_buf[next + w] < v) {
+        power_buf[next + w] = v;
+        power_todo[power_todo_len++] = next + w;
+      }
+      if (power_buf[next - w] && power_buf[next - w] < v) {
+        power_buf[next - w] = v;
+        power_todo[power_todo_len++] = next - w;
+      }
+    }
+    // calc totals, and adjust image for rendering
+    let powered = 0;
+    let unpowered = 0;
+    for (let yy = 0, idx=0; yy < w; ++yy) {
+      for (let xx = 0; xx < w; ++xx, ++idx) {
+        let v = power_buf[idx];
+        if (!xx || !yy || xx === w - 1 || yy === w - 1) {
+          power_buf[idx] = 0;
+          v = 0;
+        }
+        if (v) {
+          if (v === 1) {
+            unpowered++;
+          } else if (v !== 255) {
+            powered++;
+          }
+        }
+      }
+    }
 
-    return ret;
+    // expand for rendering
+    const N = [0, -1, 1, -w, w];
+    function expand(from: Uint8Array, to: Uint8Array): void {
+      for (let idx = 0; idx < w * w; ++idx) {
+        let v = 0;
+        for (let ii = 0; ii < N.length; ++ii) {
+          let idx2 = idx + N[ii];
+          if (idx2 >= 0 && idx2 < w * w) {
+            v = max(v, from[idx2]);
+          }
+        }
+        to[idx] = v;
+      }
+    }
+    expand(power_buf, power_buf2);
+    expand(power_buf2, power_buf);
+
+    this.area_tex_dirty = true;
+    this.power_tex_dirty = true;
+
+    return [ret, powered/(powered + unpowered) * 100];
   }
 
   getAreaSprite(): Sprite | null {
@@ -310,13 +389,13 @@ class GameState {
           height: w,
           format: TEXTURE_FORMAT.R8,
           name: 'area_eval',
-          data: this.area_img_data!,
+          data: area_buf,
           filter_min: gl.NEAREST,
           filter_mag: gl.NEAREST,
         });
       } else {
         // @ts-expect-error TODO!
-        this.area_tex.updateData(w, w, this.area_img_data!);
+        this.area_tex.updateData(w, w, area_buf);
       }
 
       if (!this.area_sprite) {
@@ -327,6 +406,37 @@ class GameState {
 
     }
     return this.area_sprite;
+  }
+
+  getPowerSprite(): Sprite | null {
+    if (this.power_tex_dirty) {
+      this.power_tex_dirty = false;
+
+      const w = AREA_CANVAS_W;
+      if (!this.power_tex) {
+        this.power_tex = textureLoad({
+          width: w,
+          height: w,
+          format: TEXTURE_FORMAT.R8,
+          name: 'power_eval',
+          data: power_buf,
+          wrap_s: gl.CLAMP_TO_EDGE,
+          wrap_t: gl.CLAMP_TO_EDGE,
+          filter_min: gl.LINEAR,
+          filter_mag: gl.LINEAR,
+        });
+      } else {
+        // @ts-expect-error TODO!
+        this.power_tex.updateData(w, w, power_buf);
+      }
+
+      if (!this.power_sprite) {
+        this.power_sprite = spriteCreate({
+          texs: [this.power_tex!],
+        });
+      }
+    }
+    return this.power_sprite;
   }
 
   evaluation!: Evaluation;
@@ -445,12 +555,13 @@ class GameState {
     symmap.symcount = symmetry;
     symmap.symmax = symmax;
 
-    let areas = this.evaluateAreas();
+    let [areas, power_eval] = this.evaluateAreas();
 
     this.evaluation = {
       components,
       ink,
       areas,
+      power: power_eval,
       symmetry: (symmax ? symmetry / symmax : 1) * 100,
     };
   }
@@ -459,8 +570,10 @@ class GameState {
 let font: Font;
 
 let game_state: GameState;
+let sprite_runes: Sprite;
 function init(): void {
   game_state = new GameState();
+  sprite_runes = autoAtlas('runes', 'def');
 }
 
 function circAngleToXY(circ: number, ang: number): [number, number] {
@@ -509,33 +622,39 @@ function doBlurEffect(factor: number): void {
   this_frame_source = params.framebuffer_source;
 }
 
-function doColorEffect(): void {
+let tex2_transform = vec4(1, 1, 0, 0);
+function doColorEffect(highlight_symmetry: boolean): void {
   let params = {
     color: palette[PALETTE_GLOW],
+    tex2_transform,
   };
   let source = [
     this_frame_source,
     framebufferEnd({ filter_linear: false, need_depth: false }),
+    game_state.getPowerSprite()!.texs[0],
   ];
   effects.applyCopy({
-    shader: 'glow_merge',
+    shader: highlight_symmetry ? 'glow_merge_no_power' : 'glow_merge',
     source,
     params,
   });
 }
 
-function queuePostprocess(): void {
+function queuePostprocess(highlight_symmetry: boolean): void {
   let blur_factor = 1;
   effectsQueue(Z.POSTPROCESS, doBlurEffect.bind(null, blur_factor));
-  effectsQueue(Z.POSTPROCESS + 1, doColorEffect);
+  effectsQueue(Z.POSTPROCESS + 1, doColorEffect.bind(null, highlight_symmetry));
 }
 
 const EVALS: [EvalType, string][] = [
   ['components', 'Components'],
+  ['areas', 'Areas'],
   ['ink', 'Ink'],
   ['symmetry', 'Symmetry'],
-  ['areas', 'Areas'],
+  ['power', 'Power'],
 ];
+
+const RUNE_W = POWER_R * 1.5;
 
 const EVAL_W = 200;
 const PAD = 8;
@@ -543,11 +662,11 @@ let mouse_pos = vec2();
 let was_drag = false;
 function statePlay(dt: number): void {
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
-  queuePostprocess();
   let { circles, lines, power, placing } = game_state;
 
   let highlight_symmetry = false;
   let highlight_areas = false;
+  let highlight_power = false;
   let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
   for (let ii = 0; ii < EVALS.length; ++ii) {
     let pair = EVALS[ii];
@@ -564,7 +683,7 @@ function statePlay(dt: number): void {
       align: ALIGN.HCENTER | ALIGN.HWRAP,
       text: `${pair[1]}\n${round(v)}${extra}`,
     });
-    if ((pair[0] === 'symmetry' || pair[0] === 'areas') && mouseOver({
+    if ((pair[0] === 'symmetry' || pair[0] === 'areas' || pair[0] === 'power') && mouseOver({
       x: xx,
       y: 10,
       w: EVAL_W,
@@ -572,24 +691,44 @@ function statePlay(dt: number): void {
     })) {
       if (pair[0] === 'symmetry') {
         highlight_symmetry = true;
-      } else {
+      } else if (pair[0] === 'areas') {
         highlight_areas = !highlight_areas;
+      } else if (pair[0] === 'power') {
+        highlight_power = !highlight_power;
       }
     }
     xx += EVAL_W + PAD;
   }
+
+  queuePostprocess(highlight_symmetry);
+
+  let area_canvas_size = AREA_CANVAS_W / VIS_TO_CANVAS_SCALE;
   if (highlight_areas) {
     let area_sprite = game_state.getAreaSprite();
     if (area_sprite) {
-      let canvas_size = AREA_CANVAS_W / VIS_TO_CANVAS_SCALE;
       area_sprite.draw({
-        x: MC_XC - canvas_size / 2,
-        y: MC_YC - canvas_size / 2,
-        w: canvas_size,
-        h: canvas_size,
+        x: MC_XC - area_canvas_size / 2,
+        y: MC_YC - area_canvas_size / 2,
+        w: area_canvas_size,
+        h: area_canvas_size,
       });
     }
   }
+  if (highlight_power) {
+    let power_sprite = game_state.getPowerSprite();
+    if (power_sprite) {
+      power_sprite.draw({
+        x: MC_XC - area_canvas_size / 2,
+        y: MC_YC - area_canvas_size / 2,
+        w: area_canvas_size,
+        h: area_canvas_size,
+      });
+    }
+  }
+  tex2_transform[0] = camera2d.wReal() / area_canvas_size;
+  tex2_transform[1] = -camera2d.hReal() / area_canvas_size;
+  tex2_transform[2] = -((MC_XC - area_canvas_size / 2) - camera2d.x0Real()) / area_canvas_size;
+  tex2_transform[3] = 1 + ((camera2d.y1Real() - (MC_YC + area_canvas_size / 2)) / area_canvas_size);
 
   let do_hover = mouseOver({
     x: MC_X0 - PAD, y: MC_Y0 - PAD,
@@ -657,6 +796,14 @@ function statePlay(dt: number): void {
     drawCircle(x, y, Z.POWER, POWER_R, 1, palette[PALETTE_BG]);
     let pal = highlight_symmetry && !game_state.symmap.power[ii] ? PALETTE_SYMERROR : PALETTE_POWER;
     drawCircleAA(x, y, Z.POWER + 0.1, POWER_R, LINE_W, 1, palette[pal]);
+    sprite_runes.draw({
+      x: x - RUNE_W/2,
+      y: y - RUNE_W/2,
+      w: RUNE_W,
+      h: RUNE_W,
+      frame: (circles[pow[0]] * ANGLE_STEPS + pow[1]) % (sprite_runes.uidata!.rects as Array<Vec4>).length,
+      color: palette[PALETTE_POWER],
+    });
   }
 
   let right_click: [string, VoidFunc] | null = null;
@@ -926,6 +1073,9 @@ export function main(): void {
 
   effects.registerShader('glow_merge', {
     fp: 'shaders/effects_glow_merge.fp',
+  });
+  effects.registerShader('glow_merge_no_power', {
+    fp: 'shaders/effects_glow_merge_no_power.fp',
   });
 
   if (!engine.startup({
