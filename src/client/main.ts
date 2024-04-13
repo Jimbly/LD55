@@ -6,6 +6,7 @@ local_storage.setStoragePrefix('ld55'); // Before requiring anything else that m
 import * as effects from 'glov/client/effects';
 import { effectsQueue } from 'glov/client/effects';
 import * as engine from 'glov/client/engine';
+import { ALIGN, Font, fontStyle, intColorFromVec4Color } from 'glov/client/font';
 import { framebufferEnd } from 'glov/client/framebuffer';
 import {
   KEYS,
@@ -13,6 +14,7 @@ import {
   mouseOver,
   mousePos,
 } from 'glov/client/input';
+import { localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
 import { netInit } from 'glov/client/net';
 import { spriteSetGet } from 'glov/client/sprite_sets';
 // import {
@@ -30,6 +32,7 @@ import {
   setFontHeight,
   uiButtonHeight,
 } from 'glov/client/ui';
+import { DataObject } from 'glov/common/types';
 import { ridx } from 'glov/common/util';
 import {
   Vec4,
@@ -42,7 +45,7 @@ import {
 } from 'glov/common/vmath';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const { PI, abs, atan2, cos, max, min, sin, round } = Math;
+const { PI, abs, atan2, cos, max, min, round, sin, sqrt } = Math;
 
 window.Z = window.Z || {};
 Z.BACKGROUND = 1;
@@ -73,24 +76,12 @@ const PALETTE_HOVER = 4;
 const PALETTE_HOVER_DELETE = 3;
 const PALETTE_GLOW = 5;
 
-const CIRCLE_STEPS = 12;
-const ANGLE_STEPS = 48;
-const CIRCLE_MIN = 4;
-type Mode = 'line' | 'circle' | 'power';
-class GameState {
-  circles: number[] = [8];
-  lines: [number, number, number, number][] = [[0, 5, 0, 20]];
-  power: [number, number][] = [[0, 15]];
-  mode: Mode = 'line';
-  placing: null | [number, number] = null;
-  // constructor() {
-  // }
-}
-
-let game_state: GameState;
-function init(): void {
-  game_state = new GameState();
-}
+const style_eval = fontStyle(null, {
+  color: 0xFFFFFFff,
+  glow_color: intColorFromVec4Color(palette[PALETTE_GLOW]),
+  glow_inner: 0,
+  glow_outer: 2.5,
+});
 
 const MC_X0 = 560;
 const MC_Y0 = 155;
@@ -100,6 +91,83 @@ const MC_XC = MC_X0 + MC_W/2;
 const MC_YC = MC_Y0 + MC_W/2;
 const LINE_W = 8;
 const POWER_R = 50;
+
+const CIRCLE_STEPS = 12;
+const ANGLE_STEPS = 48;
+const CIRCLE_MIN = 4;
+type Mode = 'line' | 'circle' | 'power';
+type EvalType = 'components' | 'ink';
+type Evaluation = Record<EvalType, number>;
+class GameState {
+  circles: number[] = [8];
+  lines: [number, number, number, number][] = [[0, 5, 0, 20]];
+  power: [number, number][] = [[0, 15]];
+  mode: Mode = 'line';
+  placing: null | [number, number] = null;
+  constructor() {
+    if (engine.DEBUG) {
+      let saved = localStorageGetJSON<DataObject>('state');
+      if (saved) {
+        this.circles = saved.circles as number[];
+        this.lines = saved.lines as [number, number, number, number][];
+        this.power = saved.power as [number, number][];
+      }
+    }
+    this.evaluate();
+  }
+  commit(): void {
+    localStorageSetJSON('state', this.toJSON());
+    this.evaluate();
+  }
+  toJSON(): DataObject {
+    return {
+      circles: this.circles,
+      lines: this.lines,
+      power: this.power,
+    };
+  }
+
+  evaluation!: Evaluation;
+  evaluate(): void {
+    let components = 0;
+    let { circles, lines, power } = this;
+    components += power.length;
+    let ink = 0;
+    for (let ii = 0; ii < circles.length; ++ii) {
+      let r = circles[ii];
+      ++components;
+      ink += 2 * PI * r;
+    }
+    for (let ii = 0; ii < lines.length; ++ii) {
+      let [c0, a0, c1, a1] = lines[ii];
+      ++components;
+      let r0 = circles[c0];
+      let r1 = circles[c1];
+      a0 = a0 / ANGLE_STEPS * 2 * PI;
+      a1 = a1 / ANGLE_STEPS * 2 * PI;
+      let x0 = sin(a0) * r0;
+      let y0 = cos(a0) * r0;
+      let x1 = sin(a1) * r1;
+      let y1 = cos(a1) * r1;
+      ink += sqrt((x1 - x0)*(x1 - x0) + (y1 - y0) * (y1 - y0));
+    }
+    for (let ii = 0; ii < power.length; ++ii) {
+      ++components;
+      ink += 3; // plus symbol?
+    }
+    this.evaluation = {
+      components,
+      ink,
+    };
+  }
+}
+
+let font: Font;
+
+let game_state: GameState;
+function init(): void {
+  game_state = new GameState();
+}
 
 function circAngleToXY(circ: number, ang: number): [number, number] {
   let r = game_state.circles[circ] / CIRCLE_STEPS;
@@ -174,6 +242,12 @@ const MODES: [Mode, string][] = [
   ['power', 'P'],
 ];
 
+const EVALS: [EvalType, string][] = [
+  ['components', 'Components'],
+  ['ink', 'Ink'],
+];
+
+const EVAL_W = 200;
 const PAD = 8;
 let mouse_pos = vec2();
 function statePlay(dt: number): void {
@@ -198,6 +272,21 @@ function statePlay(dt: number): void {
       game_state.placing = null;
     }
     xx += button_height + PAD;
+  }
+
+  xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
+  for (let ii = 0; ii < EVALS.length; ++ii) {
+    let pair = EVALS[ii];
+    let v = game_state.evaluation[pair[0]];
+    font.draw({
+      style: style_eval,
+      x: xx,
+      y: 10,
+      w: EVAL_W,
+      align: ALIGN.HCENTER | ALIGN.HWRAP,
+      text: `${pair[1]}\n${round(v)}`,
+    });
+    xx += EVAL_W + PAD;
   }
 
   let do_hover = mouseOver({
@@ -250,6 +339,7 @@ function statePlay(dt: number): void {
           }
         }
         ridx(circles, cursor_circle);
+        game_state.commit();
       }
     } else {
       let circle_r = round(center_cursor_dist / MC_R * CIRCLE_STEPS);
@@ -262,6 +352,7 @@ function statePlay(dt: number): void {
         if (inputClick()) {
           playUISound('button_click');
           circles.push(circle_r);
+          game_state.commit();
         }
       }
     }
@@ -300,8 +391,9 @@ function statePlay(dt: number): void {
               }
             }
             if (!removed) {
-              game_state.lines.push(line);
+              lines.push(line);
             }
+            game_state.commit();
             placing = game_state.placing = null;
           }
         } else {
@@ -351,8 +443,9 @@ function statePlay(dt: number): void {
           }
         }
         if (!removed) {
-          game_state.power.push(pos);
+          power.push(pos);
         }
+        game_state.commit();
       } else {
         let would_remove = false;
         for (let ii = 0; ii < power.length; ++ii) {
@@ -421,11 +514,11 @@ export function main(): void {
   })) {
     return;
   }
-  // let font = engine.font;
+  font = engine.font;
 
   // Perfect sizes for pixely modes
   scaleSizes(32 / 32);
-  setFontHeight(26);
+  setFontHeight(32);
   setButtonHeight(92);
   if (engine.DEBUG) {
     engine.border_color[0] = 0.1;
