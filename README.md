@@ -13,3 +13,5 @@ Start with: `npm start` (after running `npm i` once)
 
 
 TODO:
+* Do X through Power to indicate deleting, not red circle
+* Highlight all lines and power red when highlighting a circle that would be deleted

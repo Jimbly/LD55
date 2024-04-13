@@ -3,44 +3,340 @@
 const local_storage = require('glov/client/local_storage');
 local_storage.setStoragePrefix('ld55'); // Before requiring anything else that might load from this
 
-import * as engine from 'glov/client/engine.js';
-import { netInit } from 'glov/client/net.js';
-import { spriteSetGet } from 'glov/client/sprite_sets.js';
+import * as engine from 'glov/client/engine';
 import {
-  Sprite,
-  spriteCreate,
-} from 'glov/client/sprites.js';
+  KEYS,
+  inputClick,
+  mouseOver,
+  mousePos,
+} from 'glov/client/input';
+import { netInit } from 'glov/client/net';
+import { spriteSetGet } from 'glov/client/sprite_sets';
+// import {
+//   Sprite,
+//   spriteCreate,
+// } from 'glov/client/sprites';
 import {
-  print,
+  LINE_CAP_ROUND,
+  buttonText,
+  drawCircle,
+  drawLine,
+  playUISound,
   scaleSizes,
+  setButtonHeight,
   setFontHeight,
-} from 'glov/client/ui.js';
+  uiButtonHeight,
+} from 'glov/client/ui';
+import { ridx } from 'glov/common/util';
+import {
+  Vec4,
+  v2dist,
+  v2distSq,
+  v2same,
+  v4same,
+  vec2,
+  vec4,
+} from 'glov/common/vmath';
 
-const { sin } = Math;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const { PI, abs, atan2, cos, max, min, sin, round } = Math;
 
 window.Z = window.Z || {};
 Z.BACKGROUND = 1;
 Z.SPRITES = 10;
+Z.CIRCLES = 10;
+Z.LINES = 9;
+Z.POWER = 11;
+Z.HOVER = 12;
 
 // Virtual viewport for our game logic
-const game_width = 384;
-const game_height = 256;
+const game_width = 1920;
+const game_height = 1080;
 
-let sprite_test: Sprite;
-function init(): void {
-  sprite_test = spriteCreate({
-    name: 'test',
-  });
+const palette = [
+  vec4(1, 1, 1, 1),
+  vec4(0, 1, 0.2, 1),
+  vec4(0, 0, 0, 1),
+  vec4(1, 0, 0, 1),
+  vec4(0, 0, 1, 1),
+];
+const PALETTE_CIRCLE = 0;
+const PALETTE_LINE = 0;
+const PALETTE_POWER = 1;
+const PALETTE_BG = 2;
+const PALETTE_HOVER = 4;
+const PALETTE_HOVER_DELETE = 3;
+
+const CIRCLE_STEPS = 12;
+const ANGLE_STEPS = 48;
+const CIRCLE_MIN = 4;
+type Mode = 'line' | 'circle' | 'power';
+class GameState {
+  circles: number[] = [8];
+  lines: [number, number, number, number][] = [[0, 5, 0, 20]];
+  power: [number, number][] = [[0, 15]];
+  mode: Mode = 'line';
+  placing: null | [number, number] = null;
+  // constructor() {
+  // }
 }
 
+let game_state: GameState;
+function init(): void {
+  game_state = new GameState();
+}
+
+const MC_X0 = 560;
+const MC_Y0 = 155;
+const MC_W = 800;
+const MC_R = MC_W / 2;
+const MC_XC = MC_X0 + MC_W/2;
+const MC_YC = MC_Y0 + MC_W/2;
+const LINE_W = 8;
+const POWER_R = 50;
+
+function circAngleToXY(circ: number, ang: number): [number, number] {
+  let r = game_state.circles[circ] / CIRCLE_STEPS;
+  ang = ang / ANGLE_STEPS * 2 * PI;
+  return [
+    MC_XC + sin(ang) * r * MC_R,
+    MC_YC + cos(ang) * r * MC_R,
+  ];
+}
+
+function drawCircleAA(x: number, y: number, z: number, r: number, line_w: number, precise: number, color: Vec4): void {
+  let segments = max(50, round(r / 2));
+  let dr = PI * 2 / segments;
+  let angle = 0;
+  let xx = x + sin(angle) * r;
+  let yy = y + cos(angle) * r;
+  for (let ii = 0; ii < segments; ++ii) {
+    angle += dr;
+    let x2 = x + sin(angle) * r;
+    let y2 = y + cos(angle) * r;
+    drawLine(xx, yy, x2, y2, z, line_w, precise, color, LINE_CAP_ROUND);
+    xx = x2;
+    yy = y2;
+  }
+}
+
+function angleDiff(a: number, b: number): number {
+  let d = abs(a - b);
+  if (d > ANGLE_STEPS / 2) {
+    d = ANGLE_STEPS - d;
+  }
+  return d;
+}
+
+const MODES: [Mode, string][] = [
+  ['circle', 'O'],
+  ['line', '/'],
+  ['power', 'P'],
+];
+
+const PAD = 8;
+let mouse_pos = vec2();
 function statePlay(dt: number): void {
-  print(null,10,10,1, 'Test!');
-  sprite_test.draw({
-    x: 20 + sin(engine.frame_timestamp * 0.005) * 20,
-    y: 20,
-    w: 10,
-    h: 10,
+  gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
+  let { circles, lines, power, mode, placing } = game_state;
+
+  let button_height = uiButtonHeight();
+  let xx = (game_width - MODES.length * (button_height + PAD) - PAD) / 2;
+  for (let ii = 0; ii < MODES.length; ++ii) {
+    let pair = MODES[ii];
+    if (buttonText({
+      x: xx,
+      y: game_height - button_height,
+      w: button_height,
+      h: button_height,
+      text: pair[1],
+      disabled: mode === pair[0],
+      hotkey: KEYS['1'] + ii,
+    })) {
+      mode = game_state.mode = pair[0];
+      game_state.placing = null;
+    }
+    xx += button_height + PAD;
+  }
+
+  let do_hover = mouseOver({
+    x: MC_X0 - PAD, y: MC_Y0 - PAD,
+    w: MC_W + PAD, h: MC_W + PAD,
+    peek: true,
   });
+  mousePos(mouse_pos);
+
+  let center_cursor_dist = v2dist(mouse_pos, [MC_XC, MC_YC]);
+  let cursor_angle = round(atan2(mouse_pos[0] - MC_XC, mouse_pos[1] - MC_YC) * ANGLE_STEPS / (2 * PI));
+  let cursor_circle = -1;
+  let cursor_circle_dist = Infinity;
+  for (let ii = 0; ii < circles.length; ++ii) {
+    let r = circles[ii] / CIRCLE_STEPS * MC_R;
+    drawCircleAA(MC_XC, MC_YC, Z.CIRCLES, r, LINE_W, 1, palette[PALETTE_CIRCLE]);
+
+    let circle_cursor_dist = abs(center_cursor_dist - r);
+    if (circle_cursor_dist < cursor_circle_dist) {
+      cursor_circle_dist = circle_cursor_dist;
+      cursor_circle = ii;
+    }
+  }
+  if (mode === 'circle' && do_hover) {
+    if (cursor_circle !== -1 && cursor_circle_dist < MC_R/CIRCLE_STEPS/2) {
+      // near existing
+      drawCircleAA(MC_XC, MC_YC, Z.HOVER, circles[cursor_circle] / CIRCLE_STEPS * MC_R,
+        LINE_W / 2, 1, palette[PALETTE_HOVER_DELETE]);
+      if (inputClick()) {
+        playUISound('button_click');
+        let tail = circles.length - 1;
+        for (let ii = lines.length - 1; ii >= 0; --ii) {
+          let line = lines[ii];
+          if (line[0] === cursor_circle || line[2] === cursor_circle) {
+            lines.splice(ii, 1);
+          } else {
+            if (line[0] === tail) {
+              line[0] = cursor_circle;
+            }
+            if (line[2] === tail) {
+              line[2] = cursor_circle;
+            }
+          }
+        }
+        for (let ii = power.length - 1; ii >= 0; --ii) {
+          if (power[ii][0] === cursor_circle) {
+            power.splice(ii, 1);
+          } else if (power[ii][0] === tail) {
+            power[ii][0] = cursor_circle;
+          }
+        }
+        ridx(circles, cursor_circle);
+      }
+    } else {
+      let circle_r = round(center_cursor_dist / MC_R * CIRCLE_STEPS);
+      if (circle_r > CIRCLE_STEPS && circle_r < CIRCLE_STEPS + 4) {
+        circle_r = CIRCLE_STEPS;
+      }
+      if (circle_r >= CIRCLE_MIN && circle_r <= CIRCLE_STEPS) {
+        drawCircleAA(MC_XC, MC_YC, Z.HOVER, circle_r / CIRCLE_STEPS * MC_R,
+          LINE_W / 2, 1, palette[PALETTE_HOVER]);
+        if (inputClick()) {
+          playUISound('button_click');
+          circles.push(circle_r);
+        }
+      }
+    }
+  }
+  if (mode === 'line' && do_hover) {
+    if (placing) {
+      let [sx, sy] = circAngleToXY(placing[0], placing[1]);
+      drawCircle(sx, sy, Z.HOVER, LINE_W * 2, 0.5, palette[PALETTE_HOVER]);
+    }
+    if (cursor_circle_dist < MC_R / 2) {
+      // do rollover
+      let line: [number, number, number, number] = [0,0,0,0];
+      let valid = true;
+      if (placing) {
+        line = [placing[0], placing[1], cursor_circle, cursor_angle];
+        if (line[0] > line[2] || line[0] === line[2] && line[1] > line[3]) {
+          line = [cursor_circle, cursor_angle, placing[0], placing[1]];
+        }
+        if (cursor_circle === placing[0] && angleDiff(cursor_angle, placing[1]) < 5) {
+          valid = false;
+        }
+      }
+      let [tx, ty] = circAngleToXY(cursor_circle, cursor_angle);
+      if (valid && inputClick()) {
+        playUISound('button_click');
+        if (placing) {
+          if (cursor_circle === placing[0] && cursor_angle === placing[1]) {
+            placing = game_state.placing = null;
+          } else {
+            let removed = false;
+            for (let ii = 0; ii < lines.length; ++ii) {
+              if (v4same(lines[ii], line)) {
+                lines.splice(ii, 1);
+                removed = true;
+                break;
+              }
+            }
+            if (!removed) {
+              game_state.lines.push(line);
+            }
+            placing = game_state.placing = null;
+          }
+        } else {
+          placing = game_state.placing = [cursor_circle, cursor_angle];
+        }
+      } else {
+        drawCircle(tx, ty, Z.HOVER, LINE_W * 2, 0.5, palette[valid ? PALETTE_HOVER : PALETTE_HOVER_DELETE]);
+        if (placing) {
+          let [sx, sy] = circAngleToXY(placing[0], placing[1]);
+          let would_remove = false;
+          for (let ii = 0; ii < lines.length; ++ii) {
+            if (v4same(lines[ii], line)) {
+              would_remove = true;
+              break;
+            }
+          }
+          drawLine(sx, sy, tx, ty, Z.HOVER, LINE_W / 2, 0.5,
+            palette[(would_remove || !valid) ? PALETTE_HOVER_DELETE : PALETTE_HOVER]);
+        }
+      }
+    }
+  }
+  if (mode === 'power' && do_hover) {
+    if (cursor_circle_dist < MC_R / 2) {
+      // do rollover
+      let screen_pos = circAngleToXY(cursor_circle, cursor_angle);
+      let [tx, ty] = screen_pos;
+      let pos: [number, number] = [cursor_circle, cursor_angle];
+      let valid = true;
+      for (let ii = 0; ii < power.length; ++ii) {
+        let test = power[ii];
+        let opos = circAngleToXY(test[0], test[1]);
+        if (v2distSq(screen_pos, opos) < POWER_R * 2 * POWER_R * 2 && (
+          screen_pos[0] !== opos[0] || screen_pos[1] !== opos[1]
+        )) {
+          valid = false;
+        }
+      }
+      if (valid && inputClick()) {
+        playUISound('button_click');
+        let removed = false;
+        for (let ii = 0; ii < power.length; ++ii) {
+          if (v2same(power[ii], pos)) {
+            power.splice(ii, 1);
+            removed = true;
+            break;
+          }
+        }
+        if (!removed) {
+          game_state.power.push(pos);
+        }
+      } else {
+        let would_remove = false;
+        for (let ii = 0; ii < power.length; ++ii) {
+          if (v2same(power[ii], pos)) {
+            would_remove = true;
+            break;
+          }
+        }
+        drawCircle(tx, ty, Z.HOVER, POWER_R * 0.75, 0.5,
+          palette[(would_remove || !valid) ? PALETTE_HOVER_DELETE : PALETTE_HOVER]);
+      }
+    }
+  }
+  for (let ii = 0; ii < lines.length; ++ii) {
+    let line = lines[ii];
+    let [x0, y0] = circAngleToXY(line[0], line[1]);
+    let [x1, y1] = circAngleToXY(line[2], line[3]);
+    drawLine(x0, y0, x1, y1, Z.LINES, LINE_W, 1, palette[PALETTE_LINE]);
+  }
+  for (let ii = 0; ii < power.length; ++ii) {
+    let pow = power[ii];
+    let [x, y] = circAngleToXY(pow[0], pow[1]);
+    drawCircle(x, y, Z.POWER, POWER_R, 1, palette[PALETTE_BG]);
+    drawCircleAA(x, y, Z.POWER + 0.1, POWER_R, LINE_W, 1, palette[PALETTE_POWER]);
+  }
 }
 
 export function main(): void {
@@ -52,7 +348,7 @@ export function main(): void {
   const font_info_04b03x2 = require('./img/font/04b03_8x2.json');
   const font_info_04b03x1 = require('./img/font/04b03_8x1.json');
   const font_info_palanquin32 = require('./img/font/palanquin32.json');
-  let pixely = 'on';
+  let pixely = 'off';
   let font_def;
   let ui_sprites;
   let pixel_perfect = 0;
@@ -76,14 +372,20 @@ export function main(): void {
     antialias: false,
     ui_sprites,
     pixel_perfect,
+    line_mode: 0,
   })) {
     return;
   }
   // let font = engine.font;
 
   // Perfect sizes for pixely modes
-  scaleSizes(13 / 32);
-  setFontHeight(8);
+  scaleSizes(32 / 32);
+  setFontHeight(26);
+  setButtonHeight(92);
+  if (engine.DEBUG) {
+    engine.border_color[0] = 0.1;
+    engine.border_color[2] = 0.1;
+  }
 
   init();
 
