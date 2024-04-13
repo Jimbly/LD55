@@ -51,6 +51,7 @@ import {
   v2dist,
   v2distSq,
   v2same,
+  v3iScale,
   v4same,
   vec2,
   vec4,
@@ -67,6 +68,7 @@ Z.LINES = 9;
 Z.POWER = 11;
 Z.POSTPROCESS = 15;
 Z.HOVER = 20;
+Z.RUNES = 100; // Z.POWER;
 
 // Virtual viewport for our game logic
 const game_width = 1920;
@@ -79,6 +81,7 @@ const palette = [
   vec4(1, 0.25, 0.25, 1),
   vec4(0, 0, 1, 1),
   vec4(196/255, 17/255, 255/255, 1),
+  v3iScale(vec4(196/255, 17/255, 255/255, 1), 0.35) as Vec4,
 ];
 const PALETTE_CIRCLE = 0;
 const PALETTE_LINE = 0;
@@ -87,6 +90,7 @@ const PALETTE_BG = 2;
 const PALETTE_HOVER = 4;
 const PALETTE_HOVER_DELETE = 3;
 const PALETTE_GLOW = 5;
+const PALETTE_GLOW_SUBDUED = 6;
 const PALETTE_SYMERROR = 3;
 
 const style_eval = fontStyle(null, {
@@ -105,7 +109,7 @@ const MC_XC = MC_X0 + MC_W/2;
 const MC_YC = MC_Y0 + MC_W/2;
 const LINE_W = 8;
 const LINE_W_DELETE = 4;
-const POWER_R = 50;
+const POWER_R = 40;
 
 const VIS_MAXR = MC_R + POWER_R + LINE_W/2;
 const AREA_CANVAS_W = 512;
@@ -145,7 +149,7 @@ const power_buf = new Uint8Array(AREA_CANVAS_W * AREA_CANVAS_W);
 const power_buf2 = new Uint8Array(AREA_CANVAS_W * AREA_CANVAS_W);
 const power_todo = new Uint32Array(AREA_CANVAS_W * AREA_CANVAS_W);
 
-type EvalType = 'components' | 'ink' | 'symmetry' | 'areas' | 'power';
+type EvalType = 'components' | 'ink' | 'symmetry' | 'cells' | 'power';
 type Evaluation = Record<EvalType, number>;
 class GameState {
   circles: number[] = [8];
@@ -378,7 +382,7 @@ class GameState {
     return [ret, powered/(powered + unpowered) * 100];
   }
 
-  getAreaSprite(): Sprite | null {
+  getCellSprite(): Sprite | null {
     if (this.area_tex_dirty) {
       this.area_tex_dirty = false;
 
@@ -443,7 +447,6 @@ class GameState {
   evaluate(): void {
     let components = 0;
     let { circles, lines, power } = this;
-    components += power.length;
     this.symmap = {
       lines: [],
       power: [],
@@ -555,12 +558,12 @@ class GameState {
     symmap.symcount = symmetry;
     symmap.symmax = symmax;
 
-    let [areas, power_eval] = this.evaluateAreas();
+    let [cells, power_eval] = this.evaluateAreas();
 
     this.evaluation = {
       components,
       ink,
-      areas,
+      cells,
       power: power_eval,
       symmetry: (symmax ? symmetry / symmax : 1) * 100,
     };
@@ -625,7 +628,7 @@ function doBlurEffect(factor: number): void {
 let tex2_transform = vec4(1, 1, 0, 0);
 function doColorEffect(highlight_symmetry: boolean): void {
   let params = {
-    color: palette[PALETTE_GLOW],
+    color: palette[highlight_symmetry ? PALETTE_GLOW_SUBDUED : PALETTE_GLOW],
     tex2_transform,
   };
   let source = [
@@ -648,7 +651,7 @@ function queuePostprocess(highlight_symmetry: boolean): void {
 
 const EVALS: [EvalType, string][] = [
   ['components', 'Components'],
-  ['areas', 'Areas'],
+  ['cells', 'Cells'],
   ['ink', 'Ink'],
   ['symmetry', 'Symmetry'],
   ['power', 'Power'],
@@ -665,7 +668,7 @@ function statePlay(dt: number): void {
   let { circles, lines, power, placing } = game_state;
 
   let highlight_symmetry = false;
-  let highlight_areas = false;
+  let highlight_cells = false;
   let highlight_power = false;
   let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
   for (let ii = 0; ii < EVALS.length; ++ii) {
@@ -683,7 +686,7 @@ function statePlay(dt: number): void {
       align: ALIGN.HCENTER | ALIGN.HWRAP,
       text: `${pair[1]}\n${round(v)}${extra}`,
     });
-    if ((pair[0] === 'symmetry' || pair[0] === 'areas' || pair[0] === 'power') && mouseOver({
+    if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') && mouseOver({
       x: xx,
       y: 10,
       w: EVAL_W,
@@ -691,8 +694,8 @@ function statePlay(dt: number): void {
     })) {
       if (pair[0] === 'symmetry') {
         highlight_symmetry = true;
-      } else if (pair[0] === 'areas') {
-        highlight_areas = !highlight_areas;
+      } else if (pair[0] === 'cells') {
+        highlight_cells = !highlight_cells;
       } else if (pair[0] === 'power') {
         highlight_power = !highlight_power;
       }
@@ -703,8 +706,8 @@ function statePlay(dt: number): void {
   queuePostprocess(highlight_symmetry);
 
   let area_canvas_size = AREA_CANVAS_W / VIS_TO_CANVAS_SCALE;
-  if (highlight_areas) {
-    let area_sprite = game_state.getAreaSprite();
+  if (highlight_cells) {
+    let area_sprite = game_state.getCellSprite();
     if (area_sprite) {
       area_sprite.draw({
         x: MC_XC - area_canvas_size / 2,
@@ -799,10 +802,11 @@ function statePlay(dt: number): void {
     sprite_runes.draw({
       x: x - RUNE_W/2,
       y: y - RUNE_W/2,
+      z: Z.RUNES,
       w: RUNE_W,
       h: RUNE_W,
       frame: (circles[pow[0]] * ANGLE_STEPS + pow[1]) % (sprite_runes.uidata!.rects as Array<Vec4>).length,
-      color: palette[PALETTE_POWER],
+      color: palette[pal],
     });
   }
 
