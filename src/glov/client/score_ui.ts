@@ -358,7 +358,7 @@ export function scoresDraw<ScoreType>({
       x,
       y: y - size * 0.25,
       z,
-      w: size * (show_rename ? 8 : 10),
+      w: size * (show_rename ? 7 : 10),
       h: button_height,
       text: force_show_rename && my_name === scores_edit_box.text ? 'Cancel' : my_name ? 'Update Name' : 'Set Name',
     };

@@ -46,6 +46,7 @@ import {
   blendModeSet,
   spriteCreate,
   spriteQueueFn,
+  spriteQueueRaw4,
 } from 'glov/client/sprites';
 import {
   TEXTURE_FORMAT,
@@ -70,10 +71,13 @@ import { randCreate } from 'glov/common/rand_alea';
 import { DataObject, TSMap, VoidFunc } from 'glov/common/types';
 import { clamp, nop, ridx } from 'glov/common/util';
 import {
+  Vec2,
   Vec4,
+  unit_vec,
   v2dist,
   v2distSq,
   v2same,
+  v2set,
   v3iScale,
   v4same,
   vec2,
@@ -95,6 +99,7 @@ Z.DEMON = 50;
 Z.POSTPROCESS_LATE = Z.DEMON + 4.5;
 Z.HOVER = 60;
 Z.UI = 100;
+Z.GRAPH_OVERLAY = 100;
 Z.RUNES = 100; // Z.POWER;
 
 // Virtual viewport for our game logic
@@ -114,6 +119,7 @@ const palette = [
   vec4ColorFromIntColor(vec4(), 0x45ba7fff),
   vec4ColorFromIntColor(vec4(), 0xba5044ff),
   vec4ColorFromIntColor(vec4(), 0xd7c4b3ff),
+  vec4ColorFromIntColor(vec4(), 0xddbfa2ff),
 ];
 const font_palette = palette.map(intColorFromVec4Color);
 const PALETTE_CIRCLE = 0;
@@ -131,12 +137,26 @@ const PALETTE_CRIM_BAR = 8;
 const PALETTE_CRIM_KNOWLEDGE_BAR = 9;
 const PALETTE_CRIM_BORDER = 10;
 const PALETTE_CRIM_CARD = 11;
+const PALETTE_OFFWHITE = 12;
 
 const style_eval = fontStyle(null, {
   color: 0xFFFFFFff,
   glow_color: intColorFromVec4Color(palette[PALETTE_GLOW]),
   glow_inner: 0,
   glow_outer: 2.5,
+});
+const style_eval_match = fontStyle(style_eval, {
+  glow_color: intColorFromVec4Color(palette[PALETTE_CRIM_KNOWLEDGE_BAR]),
+});
+const style_eval_target2 = fontStyle(style_eval, {
+  color: intColorFromVec4Color(palette[PALETTE_OFFWHITE]),
+  glow_color: 0xFF0000ff,
+});
+const style_eval2 = fontStyle(null, {
+  color: intColorFromVec4Color(palette[PALETTE_OFFWHITE]),
+  glow_color: intColorFromVec4Color(palette[PALETTE_GLOW]),
+  glow_inner: -2.5,
+  glow_outer: 7,
 });
 const style_help = style_eval;
 
@@ -262,12 +282,12 @@ let score_system: ScoreSystem<Score>;
 
 const MATCH_PERFECT = 0.05;
 
-const EVALS: [EvalType, string][] = [
-  ['components', 'Components'],
-  ['cells', 'Cells'],
+const EVALS: [EvalType, string, number, number][] = [
+  ['components', 'Components', 0, -1],
+  ['power', 'Power', 1, 0],
+  ['cells', 'Cells', 0, 1],
   // ['ink', 'Ink'],
-  ['power', 'Power'],
-  ['symmetry', 'Symmetry'],
+  ['symmetry', 'Symmetry', -1, 0],
 ];
 
 function evalMatch(evaluation: Evaluation, demon: DemonTarget): number {
@@ -746,6 +766,9 @@ let sprite_runes: Sprite;
 let sprite_bar_border: Sprite;
 let sprite_bar_fill: Sprite;
 let sprite_bar_marker: Sprite;
+let sprite_graph: Sprite;
+let sprite_demonrect: Sprite;
+let sprite_radarrect: Sprite;
 let level_idx = 0;
 const MAX_LEVEL = 1000;
 function init(): void {
@@ -765,6 +788,21 @@ function init(): void {
   sprite_bar_border = autoAtlas('misc', 'bar_border');
   sprite_bar_fill = autoAtlas('misc', 'bar_fill');
   sprite_bar_marker = autoAtlas('misc', 'marker').withOrigin(vec2(0.5, 0));
+  sprite_graph = spriteCreate({
+    name: 'graph',
+    filter_min: gl.LINEAR_MIPMAP_LINEAR,
+    filter_mag: gl.LINEAR,
+  });
+  sprite_demonrect = spriteCreate({
+    name: 'demonrect',
+    filter_min: gl.LINEAR_MIPMAP_LINEAR,
+    filter_mag: gl.LINEAR,
+  });
+  sprite_radarrect = spriteCreate({
+    name: 'radarrect',
+    filter_min: gl.LINEAR_MIPMAP_LINEAR,
+    filter_mag: gl.LINEAR,
+  });
   markdownImageRegister('gp', {
     sprite: autoAtlas('misc', 'gp'),
     frame: 0,
@@ -879,6 +917,124 @@ function formatMatch(v: number): string {
     v = 99;
   }
   return `${v}%`;
+}
+
+const GRAPH_W = 940/2;
+const GRAPH_H = 1536/2;
+const GRAPH_R = 340/2;
+const GRAPH_MIN_R = 0.1;
+let eval_pos: [Vec2, Vec2, Vec2, Vec2] = [vec2(), vec2(), vec2(), vec2()];
+function drawDemon2(): void {
+  const { evaluation, target } = game_state;
+  const x0 = game_width - GRAPH_W;
+  let y = (game_height - GRAPH_H) / 2;
+  sprite_graph.draw({
+    x: x0,
+    y,
+    z: Z.GRAPH_OVERLAY,
+    w: GRAPH_W,
+    h: GRAPH_H,
+  });
+
+  let xc = x0 + GRAPH_W/2;
+  let yc = y + 974/2;
+  v2set(eval_pos[0], x0 + 313/2, y + 242/2);
+  v2set(eval_pos[1], x0 + (940 - 313)/2, y + 242/2);
+  v2set(eval_pos[2], x0 + 313/2, y + 422/2);
+  v2set(eval_pos[3], x0 + (940 - 313)/2, y + 422/2);
+
+  let my_lines: [number, number][] = [];
+  let my_y2: number[] = [];
+  let target_lines: [number, number][] = [];
+  let target_y2: number[] = [];
+  const font_height = uiTextHeight() * 0.8;
+  let show_mine = !mouseOver({
+    x: x0, y: y + GRAPH_H - 80,
+    w: GRAPH_W, h: 80,
+  });
+  for (let jj = 0; jj < EVALS.length; ++jj) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    let [eval_type, ignored, dx, dy] = EVALS[jj];
+    let range = ranges[eval_type];
+    let my_value = evaluation[eval_type];
+    let my_p = clamp((my_value - range[0]) / (range[1] - range[0]), 0, 1);
+    let my_r = GRAPH_MIN_R + (1 - GRAPH_MIN_R) * my_p;
+    let target_value = target[eval_type];
+    let target_p = clamp((target_value - range[0]) / (range[1] - range[0]), 0, 1);
+    let target_r = GRAPH_MIN_R + (1 - GRAPH_MIN_R) * target_p;
+    let am_close = abs(target_p - my_p) < MATCH_PERFECT;
+
+    let line_offs = my_r * GRAPH_R;
+    let myx = xc + dx * line_offs;
+    let myy = yc + dy * line_offs;
+    my_lines.push([myx, myy]);
+    my_y2.push(yc + dy * line_offs * 2);
+
+    line_offs = target_r * GRAPH_R;
+    let targetx = xc + dx * line_offs;
+    let targety = yc + dy * line_offs;
+    target_lines.push([targetx, targety]);
+    target_y2.push(yc + dy * line_offs * 2);
+
+    let value = `${round(show_mine ? my_value : target_value)}`;
+    if (eval_type === 'power' || eval_type === 'symmetry') {
+      value += '%';
+    }
+    let text_w = font.getStringWidth(style_eval, font_height, value);
+    let desired_x = show_mine ? myx : targetx;
+    let desired_y = (show_mine ? myy : targety) + 2;
+    const minipad = 8;
+    if (jj === 0) {
+      desired_y -= font_height + 2;
+      desired_y = clamp(desired_y, yc - GRAPH_R + minipad, yc - font_height - minipad);
+    } else if (jj === 2) {
+      desired_y = clamp(desired_y, yc + minipad, yc + GRAPH_R - font_height - minipad);
+    } else if (jj === 1) {
+      desired_x = clamp(desired_x, xc + text_w/2 + minipad, xc + GRAPH_R - text_w/2 - minipad);
+    } else if (jj === 3) {
+      desired_x = clamp(desired_x, xc - GRAPH_R + text_w/2 + minipad, xc - text_w/2 - minipad);
+    }
+    font.drawSizedAligned(am_close ? style_eval_match : show_mine ? style_eval : style_eval_target2,
+      desired_x, desired_y, Z.UI, font_height, ALIGN.HCENTER, 0, 0, value);
+
+  }
+
+  let last = my_lines[3];
+  for (let ii = 0; ii < my_lines.length; ++ii) {
+    let pos = my_lines[ii];
+    drawLine(last[0], last[1], pos[0], pos[1], Z.LINES + 1, 3, 1, [0.5,1,1,1]);
+    last = pos;
+  }
+
+  let mxc = (my_lines[1][0] + my_lines[3][0]) / 2;
+  let mxw = my_lines[3][0] - my_lines[1][0];
+  if (0) {
+    spriteQueueRaw4(sprite_radarrect.texs,
+      xc + xc - mxc, my_y2[0],
+      mxc + mxw, my_y2[1],
+      xc + xc - mxc, my_y2[2],
+      mxc - mxw, my_y2[3],
+      50,
+      0, 0, 1, 1,
+      unit_vec);
+  }
+
+  // last = target_lines[3];
+  // for (let ii = 0; ii < target_lines.length; ++ii) {
+  //   let pos = target_lines[ii];
+  //   drawLine(last[0], last[1], pos[0], pos[1], Z.LINES + 0.1, 2, 1, [1,0,0,1]);
+  //   last = pos;
+  // }
+  let txc = (target_lines[1][0] + target_lines[3][0]) / 2;
+  let txw = target_lines[3][0] - target_lines[1][0];
+  spriteQueueRaw4(sprite_demonrect.texs,
+    xc + xc - txc, target_y2[0],
+    txc + txw, target_y2[1],
+    xc + xc - txc, target_y2[2],
+    txc - txw, target_y2[3],
+    51,
+    0, 0, 1, 1,
+    unit_vec);
 }
 
 const EVAL_W = 200;
@@ -1167,53 +1323,106 @@ function statePlay(dt: number): void {
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
   let { circles, lines, power, placing } = game_state;
 
+  drawDemon2();
+
   let highlight_symmetry = highlight_symmetry_toggle;
   let highlight_cells = false;
   let highlight_power = false;
-  let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
-  for (let ii = 0; ii < EVALS.length; ++ii) {
-    let pair = EVALS[ii];
-    let v = game_state.evaluation[pair[0]];
-    let extra = '';
-    let label = pair[1];
-    if (pair[0] === 'symmetry') {
-      extra = `\n${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
-      if (inputClick({
+  if (0) {
+    let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
+    for (let ii = 0; ii < EVALS.length; ++ii) {
+      let pair = EVALS[ii];
+      let v = game_state.evaluation[pair[0]];
+      let extra = '';
+      let label = pair[1];
+      if (pair[0] === 'symmetry') {
+        extra = `\n${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
+        if (inputClick({
+          x: xx,
+          y: 10,
+          w: EVAL_W,
+          h: uiTextHeight() * 3,
+        })) {
+          playUISound('button_click');
+          highlight_symmetry_toggle = !highlight_symmetry_toggle;
+        }
+        if (highlight_symmetry_toggle) {
+          label = `[${label}]`;
+        }
+      }
+      let text_h = font.draw({
+        style: style_eval,
+        x: xx - EVAL_W * 0.5,
+        y: 10,
+        w: EVAL_W * 2,
+        align: ALIGN.HCENTER | ALIGN.HWRAP,
+        text: `${label}\n${round(v)}${extra}`,
+      });
+      if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') && mouseOver({
         x: xx,
         y: 10,
         w: EVAL_W,
-        h: uiTextHeight() * 3,
+        h: text_h,
       })) {
-        playUISound('button_click');
-        highlight_symmetry_toggle = !highlight_symmetry_toggle;
+        if (pair[0] === 'symmetry') {
+          highlight_symmetry = true;
+        } else if (pair[0] === 'cells') {
+          highlight_cells = !highlight_cells;
+        } else if (pair[0] === 'power') {
+          highlight_power = !highlight_power;
+        }
       }
-      if (highlight_symmetry_toggle) {
-        label = `[${label}]`;
-      }
+      xx += EVAL_W + PAD;
     }
-    let text_h = font.draw({
-      style: style_eval,
-      x: xx - EVAL_W * 0.5,
-      y: 10,
-      w: EVAL_W * 2,
-      align: ALIGN.HCENTER | ALIGN.HWRAP,
-      text: `${label}\n${round(v)}${extra}`,
-    });
-    if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') && mouseOver({
-      x: xx,
-      y: 10,
-      w: EVAL_W,
-      h: text_h,
-    })) {
+  } else {
+    const EVAL2_W = 314/2;
+    const EVAL_TEXT_H = uiTextHeight() * 0.8;
+    for (let ii = 0; ii < EVALS.length; ++ii) {
+      let pair = EVALS[ii];
+      let v = game_state.evaluation[pair[0]];
+      let value = `${round(v)}`;
+      let pos = eval_pos[ii];
+      let xx = pos[0] - EVAL2_W/2;
+      let yy = pos[1];
       if (pair[0] === 'symmetry') {
-        highlight_symmetry = true;
-      } else if (pair[0] === 'cells') {
-        highlight_cells = !highlight_cells;
-      } else if (pair[0] === 'power') {
-        highlight_power = !highlight_power;
+        value = `${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
+        if (inputClick({
+          x: xx,
+          y: yy - EVAL_TEXT_H,
+          w: EVAL2_W,
+          h: EVAL_TEXT_H * 2,
+        })) {
+          playUISound('button_click');
+          highlight_symmetry_toggle = !highlight_symmetry_toggle;
+        }
+        if (highlight_symmetry_toggle) {
+          value = `[${value}]`;
+        }
+      }
+      font.draw({
+        style: style_eval2,
+        x: xx,
+        y: yy,
+        w: EVAL2_W,
+        size: EVAL_TEXT_H,
+        align: ALIGN.HCENTER,
+        text: value,
+      });
+      if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') && mouseOver({
+        x: xx,
+        y: yy - EVAL_TEXT_H,
+        w: EVAL2_W,
+        h: EVAL_TEXT_H * 2,
+      })) {
+        if (pair[0] === 'symmetry') {
+          highlight_symmetry = true;
+        } else if (pair[0] === 'cells') {
+          highlight_cells = !highlight_cells;
+        } else if (pair[0] === 'power') {
+          highlight_power = !highlight_power;
+        }
       }
     }
-    xx += EVAL_W + PAD;
   }
 
   queuePostprocess(highlight_symmetry);
@@ -1246,7 +1455,9 @@ function statePlay(dt: number): void {
   tex2_transform[2] = -((MC_XC - area_canvas_size / 2) - camera2d.x0Real()) / area_canvas_size;
   tex2_transform[3] = 1 + ((camera2d.y1Real() - (MC_YC + area_canvas_size / 2)) / area_canvas_size);
 
-  drawDemons();
+  if (false) {
+    drawDemons();
+  }
   drawLevel();
 
   let do_hover = mouseOver({
@@ -1591,9 +1802,9 @@ export function main(): void {
     netInit({ engine });
   }
 
-  const font_info_ld55 = require('./img/font/ld55.json');
+  const font_info_ld55 = require('./img/font/ld55gochi.json');
   let pixely = 'off';
-  let font_def = { info: font_info_ld55, texture: 'font/ld55' };
+  let font_def = { info: font_info_ld55, texture: 'font/ld55gochi' };
   let ui_sprites;
   let pixel_perfect = 0;
 

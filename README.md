@@ -12,17 +12,13 @@ Acknowledgements:
 
 Start with: `npm start` (after running `npm i` once)
 
-Simplified plan
-* X given a single demon with known goals
-* X optimize your circle until it's good enough (beyond ~80% allowed to advance?)
-* X advance to next one
-* O high score for each demon and for the first 10 as a set
-* 4-point star for metrics instead of bars is cool
-
 TODO:
+* question mark to open a help screen with high-level summary
+  * circles don't count against or for symmetry
 * Probably: need some way to be viewing sym and power at the same time
   * sym by colors (red/white)
   * power by pulses (green?) running along it, with runes only showing up during pulse
+  * maybe visibility toggles for sym/power?
 * better demon heads
 * SFX
 * Music
@@ -36,3 +32,5 @@ TODO:
 Polish / Bugs:
 * Remove short line when drawing a larger line directly over it
 * Remove short line when a power node completely consumes it
+* Noisy BG grain texture
+
