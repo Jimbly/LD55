@@ -24,6 +24,7 @@ import {
   inputClick,
   inputDrag,
   inputTouchMode,
+  keyDown,
   keyDownEdge,
   longPress,
   mouseOver,
@@ -59,7 +60,9 @@ import {
 } from 'glov/client/textures';
 import {
   LINE_CAP_ROUND,
+  buttonImage,
   buttonText,
+  buttonWasFocused,
   drawCircle,
   drawHBox,
   drawLine,
@@ -352,31 +355,59 @@ class GameState {
   best_score: number = 0;
   cur_score: number = 0;
   did_anything = false;
+  undo_stack: string[] = [];
+  undo_idx: number = 0; // where we will write
   constructor(public level_idx: number) {
     rand.reseed(level_idx * 1007);
     let saved = localStorageGetJSON<DataObject>(`save.${level_idx}`);
     if (saved) {
-      this.circles = saved.circles as number[];
-      this.lines = saved.lines as [number, number, number, number][];
-      this.power = saved.power as [number, number][];
-      this.best_score = saved.best_score as number || 0;
-      // fixup bad debug data
-      for (let ii = 0; ii < this.lines.length; ++ii) {
-        canonicalLine(this.lines[ii]);
-      }
-      for (let ii = 0; ii < this.power.length; ++ii) {
-        this.power[ii][1] = (this.power[ii][1] + ANGLE_STEPS) % ANGLE_STEPS;
-      }
+      this.fromJSON(saved);
     }
 
     this.target = fixed_targets[level_idx] || randomDemonTarget([]);
 
     this.evaluate();
+    this.undo_stack[this.undo_idx++] = JSON.stringify(this.toJSON());
   }
   commit(): void {
     this.did_anything = true;
     this.evaluate();
-    localStorageSetJSON(`save.${this.level_idx}`, this.toJSON());
+    let ser = this.toJSON();
+    localStorageSetJSON(`save.${this.level_idx}`, ser);
+    let ser_string = JSON.stringify(ser);
+    if (this.undo_stack[this.undo_idx-1] !== ser_string) {
+      this.undo_stack[this.undo_idx++] = ser_string;
+      this.undo_stack.length = this.undo_idx;
+    }
+  }
+  canUndo(): boolean {
+    return this.undo_idx >= 2;
+  }
+  canRedo(): boolean {
+    return this.undo_idx < this.undo_stack.length;
+  }
+  undo(): void {
+    --this.undo_idx;
+    this.fromJSON(JSON.parse(this.undo_stack[this.undo_idx - 1]));
+    this.commit();
+  }
+  redo(): void {
+    ++this.undo_idx;
+    this.fromJSON(JSON.parse(this.undo_stack[this.undo_idx - 1]));
+    this.commit();
+  }
+  fromJSON(saved: DataObject): void {
+    this.circles = saved.circles as number[];
+    this.lines = saved.lines as [number, number, number, number][];
+    this.power = saved.power as [number, number][];
+    this.best_score = saved.best_score as number || 0;
+    // fixup bad debug data
+    for (let ii = 0; ii < this.lines.length; ++ii) {
+      canonicalLine(this.lines[ii]);
+    }
+    for (let ii = 0; ii < this.power.length; ++ii) {
+      this.power[ii][1] = (this.power[ii][1] + ANGLE_STEPS) % ANGLE_STEPS;
+    }
   }
   toJSON(): DataObject {
     return {
@@ -787,6 +818,13 @@ let sprite_demonrect: Sprite;
 let sprite_radarrect: Sprite;
 let level_idx = 0;
 const MAX_LEVEL = 1000;
+let game_state_cache: GameState[] = [];
+function getGameState(): void {
+  game_state = game_state_cache[level_idx];
+  if (!game_state) {
+    game_state = game_state_cache[level_idx] = new GameState(level_idx);
+  }
+}
 function init(): void {
   score_system = scoreAlloc({
     score_to_value: (score: Score): number => score.match,
@@ -799,7 +837,7 @@ function init(): void {
     num_names: 3,
     histogram: false,
   });
-  game_state = new GameState(level_idx);
+  getGameState();
   sprite_runes = autoAtlas('runes', 'def');
   sprite_bar_border = autoAtlas('misc', 'bar_border');
   sprite_bar_fill = autoAtlas('misc', 'bar_fill');
@@ -1284,7 +1322,7 @@ function drawLevel(): void {
       font_height: button_h,
     })) {
       level_idx--;
-      game_state = new GameState(level_idx);
+      getGameState();
     }
   }
   if (level_idx >= FIXED_LEVELS || game_state.best_score > 800 || engine.DEBUG) {
@@ -1309,8 +1347,7 @@ function drawLevel(): void {
           },
         });
       }
-      game_state = new GameState(level_idx);
-
+      getGameState();
     }
   }
   y += button_h + PAD;
@@ -1361,6 +1398,8 @@ function doOverlay(type: 'help'): void {
     line_height: uiTextHeight() + 6,
     text: `Welcome **Summoning Circle Specialist**!
 
+${show_initial_help ? '[c=2]View this information at any time by selecting the "?" in the upper right.[/c]' : ''}
+
 [img=spacer]
 
 Please help us summon demons by crafting a magic circle they will respond to!
@@ -1380,8 +1419,6 @@ Demons evaluate magic circles by the following properties:
 [img=spacer]
 
 A detailed analysis of your current magic circle is shown on the right, and additional details about [c=0]symmetry[/c], [c=0]power[/c] and [c=0]components[/c] are shown if you select the category.
-
-You can view this information again at any time by selecting the "?" in the upper right.
 `
   });
 
@@ -1416,10 +1453,43 @@ let highlight_symmetry_toggle = false;
 const HELP_W = 120;
 const HELP_X = game_width - 24 - HELP_W;
 const HELP_Y = 24;
+const color_disabled = vec4(0.6, 0.4, 1, 0.5);
+const BUTTONS_W = 120;
+const BUTTONS_X1 = game_width - 24;
+const BUTTONS_Y0 = game_height - 24 - BUTTONS_W;
+const BUTTONS = [{
+  sprite: autoAtlas('misc', 'undo_hover'),
+  sprite2: autoAtlas('misc', 'undo'),
+  tooltip: 'Undo [Ctrl-Z]',
+  cb: function () {
+    game_state.undo();
+  },
+  disabled: function () {
+    return !game_state.canUndo();
+  },
+  hotkey: function () {
+    return keyDown(KEYS.CTRL) && !keyDown(KEYS.SHIFT) && keyDownEdge(KEYS.Z);
+  },
+},{
+  sprite: autoAtlas('misc', 'redo_hover'),
+  sprite2: autoAtlas('misc', 'redo'),
+  tooltip: 'Redo [Ctrl-Y]',
+  cb: function () {
+    game_state.redo();
+  },
+  disabled: function () {
+    return !game_state.canRedo();
+  },
+  hotkey: function () {
+    return keyDown(KEYS.CTRL) && (
+      keyDownEdge(KEYS.Y) ||
+      keyDown(KEYS.SHIFT) && keyDownEdge(KEYS.Z)
+    );
+  },
+}];
 function statePlay(dt: number): void {
   overlay_active = false;
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
-  let { circles, lines, power, placing } = game_state;
 
   drawDemon2();
 
@@ -1430,7 +1500,7 @@ function statePlay(dt: number): void {
     w: HELP_W,
     h: HELP_W,
   });
-  let show_help = spot_ret.focused || show_initial_help;
+  let show_help = spot_ret.focused || show_initial_help || keyDown(KEYS.F1);
   autoAtlas('misc', show_help ? 'help' : 'help_hover').draw({
     x: HELP_X,
     y: HELP_Y,
@@ -1450,6 +1520,38 @@ function statePlay(dt: number): void {
 
   if (show_help) {
     doOverlay('help');
+  }
+
+  let buttonx = BUTTONS_X1;
+  for (let ii = BUTTONS.length - 1; ii >= 0; --ii) {
+    buttonx -= BUTTONS_W;
+    let button = BUTTONS[ii];
+    let disabled = button.disabled();
+    let button_param = {
+      x: buttonx,
+      y: BUTTONS_Y0,
+      z: disabled ? Z.LINES : Z.UI,
+      w: BUTTONS_W,
+      h: BUTTONS_W,
+      shrink: 1,
+    };
+    if (buttonImage({
+      ...button_param,
+      img: disabled ? button.sprite2 : button.sprite,
+      color: disabled ? color_disabled : undefined,
+      no_bg: true,
+      disabled,
+      tooltip: button.tooltip,
+    }) || !disabled && button.hotkey()) {
+      button.cb();
+    }
+    if (buttonWasFocused()) {
+      autoAtlas('misc', 'button_glow').draw({
+        ...button_param,
+        z: button_param.z - 1,
+      });
+    }
+    buttonx -= PAD;
   }
 
   let highlight_symmetry = highlight_symmetry_toggle;
@@ -1586,6 +1688,8 @@ function statePlay(dt: number): void {
     drawDemons();
   }
   drawLevel();
+
+  let { circles, lines, power, placing } = game_state;
 
   let do_hover = mouseOver({
     x: MC_X0 - PAD*4, y: MC_Y0 - PAD*4,
