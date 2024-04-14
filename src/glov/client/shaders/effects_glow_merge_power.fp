@@ -20,10 +20,14 @@ void main()
   vec2 power_coords = interp_texcoord * tex2_transform.xy + tex2_transform.zw;
   float power_value = texture2D(inputTexture2, power_coords).r;
   float glow_value = max(tex_glow.r, max(tex_glow.g, tex_glow.b)) * 3.0;
-  if (power_coords.x > 0.0 && power_coords.x < 1.0 && power_value > 0.01) {
-    float power_w = max(0.0, 1.0 - abs(power_value - pulse.w) * 10.0);
+  if (power_coords.x > 0.0 && power_coords.x < 1.0) {
     float line_value = max(tex_lines.r, max(tex_lines.g, tex_lines.b));
-    tex_lines = mix(tex_lines, line_value * pulse.rgb, power_w);
+    if (power_value > 0.01) {
+      power_value = power_value * 0.5 + 0.5;
+      tex_lines = mix(tex_lines, line_value * vec3(0.0, 1.0, 0.0), power_value);
+    } else {
+      tex_lines = vec3(1.0, 0.25, 0.5) * line_value;
+    }
   }
   gl_FragColor = vec4((1.0 - v0) * glow_value * color.rgb + tex_lines, 1.0);
   // gl_FragColor.r = power_value;

@@ -64,6 +64,7 @@ import {
   buttonText,
   buttonWasFocused,
   drawCircle,
+  drawElipse,
   drawHBox,
   drawLine,
   drawRect,
@@ -135,16 +136,17 @@ const palette = [
   vec4(0.25, 1.0, 0.5, 1),
   vec4(0.5, 0, 0, 1),
   vec4(0.5, 1, 1, 1),
+  vec4(1, 0, 0, 1),
 ];
 const font_palette = palette.map(intColorFromVec4Color);
 const PALETTE_CIRCLE = 15;
 // const PALETTE_LINE = 0;
-// const PALETTE_POWER = 1;
 const PALETTE_BG = 2;
 const PALETTE_HOVER = 4;
 const PALETTE_HOVER_DELETE = 14;
 const PALETTE_GLOW = 5;
 // const PALETTE_GLOW_SUBDUED = 6;
+const PALETTE_POWER = PALETTE_GLOW;
 const PALETTE_SYMERROR_HIGHLIGHT = 3;
 const PALETTE_SYMERROR_NORMAL = PALETTE_CIRCLE;
 const PALETTE_SYMMATCH = 13;
@@ -155,6 +157,7 @@ const PALETTE_CRIM_KNOWLEDGE_BAR = 9;
 const PALETTE_CRIM_BORDER = 10;
 const PALETTE_CRIM_CARD = 11;
 const PALETTE_OFFWHITE = 12;
+const PALETTE_TARGET_GLOW = 16;
 
 const style_eval = fontStyle(null, {
   color: 0xFFFFFFff,
@@ -934,10 +937,18 @@ function doColorEffectEarly(highlight_symmetry: boolean): void {
     shader: 'clear',
   });
 }
-function doColorEffectLate(highlight_symmetry: boolean): void {
+let pulse_color = palette[PALETTE_POWER];
+let pulse_param = vec4(pulse_color[0], pulse_color[1], pulse_color[2], 0);
+function doColorEffectLate(highlight_power: boolean, highlight_symmetry: boolean): void {
+  let v = (1 - ((engine.getFrameTimestamp() * 0.0002) % 1)) * 2.0 - 0.8;
+  if (v > 1) {
+    v = 1 + (v - 1) * 0.4;
+  }
+  pulse_param[3] = v;
   let params = {
     color: palette[PALETTE_GLOW],
     tex2_transform,
+    pulse: pulse_param,
   };
   let source = [
     this_frame_source,
@@ -946,7 +957,7 @@ function doColorEffectLate(highlight_symmetry: boolean): void {
   ];
   blendModeSet(BLEND_ADDITIVE);
   effects.applyCopy({
-    shader: highlight_symmetry || true ? 'glow_merge_no_power' : 'glow_merge',
+    shader: highlight_power ? 'glow_merge_power' : highlight_symmetry ? 'glow_merge_no_power' : 'glow_merge',
     source,
     params,
     no_framebuffer: true,
@@ -954,11 +965,11 @@ function doColorEffectLate(highlight_symmetry: boolean): void {
   blendModeReset(false);
 }
 
-function queuePostprocess(highlight_symmetry: boolean): void {
+function queuePostprocess(highlight_power: boolean, highlight_symmetry: boolean): void {
   let blur_factor = 1;
   effectsQueue(Z.POSTPROCESS, doBlurEffect.bind(null, blur_factor));
   effectsQueue(Z.POSTPROCESS + 1, doColorEffectEarly.bind(null, highlight_symmetry));
-  spriteQueueFn(Z.POSTPROCESS_LATE, doColorEffectLate.bind(null, highlight_symmetry));
+  spriteQueueFn(Z.POSTPROCESS_LATE, doColorEffectLate.bind(null, highlight_power, highlight_symmetry));
 }
 
 function drawTriangle(x: number, y: number, z: number, rh: number, rv: number, up: boolean, color: Vec4): void {
@@ -1019,10 +1030,18 @@ function drawDemon2(): void {
   let target_lines: [number, number][] = [];
   let target_y2: number[] = [];
   const font_height = uiTextHeight() * 0.8 * GRAPH_SCALE;
-  let show_mine = !mouseOver({
+  let target_hotspot = {
     x: x0, y: y + GRAPH_H - 80*GRAPH_SCALE,
     w: GRAPH_W, h: 60*GRAPH_SCALE,
-  });
+  };
+  let show_mine = !spot({
+    def: SPOT_DEFAULT_LABEL,
+    ...target_hotspot,
+  }).focused;
+  if (!show_mine) {
+    drawElipse(target_hotspot.x, target_hotspot.y, target_hotspot.x + target_hotspot.w, target_hotspot.y + target_hotspot.h,
+      Z.UI - 1, 0.1, palette[PALETTE_TARGET_GLOW]);
+  }
   for (let jj = 0; jj < EVALS.length; ++jj) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     let [eval_type, ignored, dx, dy] = EVALS[jj];
@@ -1536,6 +1555,7 @@ A detailed analysis of your current magic circle is shown on the right, and addi
 let mouse_pos = vec2();
 let was_drag = false;
 let highlight_symmetry_toggle = false;
+let highlight_power_toggle = false;
 const HELP_W = 120;
 const BUTTON_PAD = 16;
 const HELP_X = game_width - BUTTON_PAD - HELP_W;
@@ -1601,6 +1621,13 @@ function statePlay(dt: number): void {
       w: HELP_W,
       h: HELP_W,
     });
+    autoAtlas('misc', 'button_glow').draw({
+      x: HELP_X,
+      y: HELP_Y,
+      z: Z.OVERLAY + 0.5,
+      w: HELP_W,
+      h: HELP_W,
+    });
   }
 
   if (show_initial_help) {
@@ -1625,7 +1652,7 @@ function statePlay(dt: number): void {
 
   let highlight_symmetry = highlight_symmetry_toggle;
   let highlight_cells = false;
-  let highlight_power = false;
+  let highlight_power = highlight_power_toggle;
   if (0) {
     let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
     for (let ii = 0; ii < EVALS.length; ++ii) {
@@ -1635,6 +1662,8 @@ function statePlay(dt: number): void {
       let label = pair[1];
       if (pair[0] === 'symmetry') {
         extra = `\n${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
+      }
+      if (pair[0] === 'symmetry' || pair[0] === 'power') {
         if (inputClick({
           x: xx,
           y: 10,
@@ -1642,11 +1671,18 @@ function statePlay(dt: number): void {
           h: uiTextHeight() * 3,
         })) {
           playUISound('button_click');
-          highlight_symmetry_toggle = !highlight_symmetry_toggle;
+          if (pair[0] === 'symmetry') {
+            highlight_symmetry_toggle = !highlight_symmetry_toggle;
+          } else if (pair[0] === 'power') {
+            highlight_power_toggle = !highlight_power_toggle;
+          }
         }
-        if (highlight_symmetry_toggle) {
-          label = `[${label}]`;
-        }
+      }
+      if (
+        pair[0] === 'symmetry' && highlight_symmetry_toggle ||
+        pair[0] === 'power' && highlight_power_toggle
+      ) {
+        label = `[${label}]`;
       }
       let text_h = font.draw({
         style: style_eval,
@@ -1667,35 +1703,52 @@ function statePlay(dt: number): void {
         } else if (pair[0] === 'cells') {
           highlight_cells = !highlight_cells;
         } else if (pair[0] === 'power') {
-          highlight_power = !highlight_power;
+          highlight_power = true;
         }
       }
       xx += EVAL_W + PAD;
     }
   } else {
-    const EVAL2_W = 314/2;
-    const EVAL_TEXT_H = uiTextHeight() * 0.8;
+    const EVAL2_W = 314/2 * GRAPH_SCALE;
+    const EVAL_TEXT_H = uiTextHeight() * 0.8*GRAPH_SCALE;
+    const HOT_EXTRA = 20 * GRAPH_SCALE;
     for (let ii = 0; ii < EVALS.length; ++ii) {
       let pair = EVALS[ii];
       let v = game_state.evaluation[pair[0]];
       let value = `${round(v)}`;
+      if (pair[0] === 'power') {
+        value = `${value}%`;
+      }
       let pos = eval_pos[ii];
       let xx = pos[0] - EVAL2_W/2;
       let yy = pos[1];
       if (pair[0] === 'symmetry') {
         value = `${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
-        if (inputClick({
-          x: xx,
-          y: yy - EVAL_TEXT_H,
-          w: EVAL2_W,
-          h: EVAL_TEXT_H * 2,
-        })) {
+      }
+
+      let hotspot = {
+        x: xx,
+        y: yy - EVAL_TEXT_H - HOT_EXTRA,
+        w: EVAL2_W,
+        h: EVAL_TEXT_H * 2 + HOT_EXTRA * 2,
+      };
+      if (pair[0] === 'symmetry' || pair[0] === 'power') {
+        if (inputClick(hotspot)) {
           playUISound('button_click');
-          highlight_symmetry_toggle = !highlight_symmetry_toggle;
+          if (pair[0] === 'symmetry') {
+            highlight_symmetry_toggle = !highlight_symmetry_toggle;
+            highlight_power_toggle = false;
+          } else if (pair[0] === 'power') {
+            highlight_power_toggle = !highlight_power_toggle;
+            highlight_symmetry_toggle = false;
+          }
         }
-        if (highlight_symmetry_toggle) {
-          value = `[${value}]`;
-        }
+      }
+      if (
+        pair[0] === 'symmetry' && highlight_symmetry_toggle ||
+        pair[0] === 'power' && highlight_power_toggle
+      ) {
+        value = `[${value}]`;
       }
       font.draw({
         style: style_eval2,
@@ -1706,24 +1759,34 @@ function statePlay(dt: number): void {
         align: ALIGN.HCENTER,
         text: value,
       });
-      if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') && mouseOver({
-        x: xx,
-        y: yy - EVAL_TEXT_H,
-        w: EVAL2_W,
-        h: EVAL_TEXT_H * 2,
-      })) {
-        if (pair[0] === 'symmetry') {
+      let do_hover = false;
+      if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') &&
+        spot({
+          def: SPOT_DEFAULT_LABEL,
+          ...hotspot,
+        }).focused
+      ) {
+        do_hover = true;
+        if (pair[0] === 'symmetry' && !highlight_power_toggle) {
           highlight_symmetry = true;
         } else if (pair[0] === 'cells') {
           highlight_cells = !highlight_cells;
-        } else if (pair[0] === 'power') {
-          highlight_power = !highlight_power;
+        } else if (pair[0] === 'power' && !highlight_symmetry_toggle) {
+          highlight_power = true;
         }
+      }
+      if (do_hover ||
+        pair[0] === 'symmetry' && highlight_symmetry ||
+        pair[0] === 'power' && highlight_power ||
+        pair[0] === 'cells' && highlight_cells
+      ) {
+        drawElipse(hotspot.x, hotspot.y, hotspot.x + hotspot.w, hotspot.y + hotspot.h,
+          Z.UI - 1, 0.1, palette[PALETTE_GLOW]);
       }
     }
   }
 
-  queuePostprocess(highlight_symmetry);
+  queuePostprocess(highlight_power, highlight_symmetry);
 
   let area_canvas_size = AREA_CANVAS_W / VIS_TO_CANVAS_SCALE;
   if (highlight_cells) {
@@ -1737,10 +1800,10 @@ function statePlay(dt: number): void {
       });
     }
   }
-  if (highlight_power) {
+  if (highlight_power && false) {
     let power_sprite = game_state.getPowerSprite();
     if (power_sprite) {
-      power_sprite.draw({
+      power_sprite!.draw({
         x: MC_XC - area_canvas_size / 2,
         y: MC_YC - area_canvas_size / 2,
         w: area_canvas_size,
@@ -1838,9 +1901,15 @@ function statePlay(dt: number): void {
     let [x, y] = circAngleToXY(pow[0], pow[1]);
     drawCircle(x, y, Z.POWER, POWER_R, 1, palette[PALETTE_BG]);
     let symerror = !game_state.symmap.power[ii];
-    let pal = symerror ? symerr_pal : PALETTE_SYMMATCH;
+    let pal = highlight_power ? PALETTE_SYMMATCH : symerror ? symerr_pal : PALETTE_SYMMATCH;
     drawCircleAA(x, y, Z.POWER + (symerror ? 0.15 : 0.1), POWER_R, LINE_W, 1, palette[pal]);
-    if (!highlight_cells && !highlight_power) {
+    if (!highlight_cells) {
+      let c = palette[pal];
+      if (!highlight_power) {
+        let power_w = max(0.0, 1.0 - abs(1.0 - pulse_param[3]) * 10.0);
+        c = pulse_param;
+        c = [c[0], c[1], c[2], power_w];
+      }
       sprite_runes.draw({
         x: x - RUNE_W/2,
         y: y - RUNE_W/2,
@@ -1848,7 +1917,7 @@ function statePlay(dt: number): void {
         w: RUNE_W,
         h: RUNE_W,
         frame: (circles[pow[0]] * ANGLE_STEPS + pow[1]) % (sprite_runes.uidata!.rects as Array<Vec4>).length,
-        color: palette[pal],
+        color: c,
       });
     }
   }
@@ -2140,6 +2209,9 @@ export function main(): void {
   });
   effects.registerShader('glow_merge_no_power', {
     fp: 'shaders/effects_glow_merge_no_power.fp',
+  });
+  effects.registerShader('glow_merge_power', {
+    fp: 'shaders/effects_glow_merge_power.fp',
   });
   effects.registerShader('clear', {
     fp: 'shaders/effects_clear.fp',
