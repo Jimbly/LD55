@@ -13,17 +13,13 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* better demon heads
 * SFX
 * Music
 * SFX/Music toggles
 * zen mode toggle
 * Change level 10 notification to use overlay screen
 * Copy circle from previous if no save?  Start completely fresh beyond the first one?  Something more interesting as default?
-* Do X through Power to indicate deleting, not red circle
-* Highlight all lines and power red when highlighting a circle that would be deleted
 * hover/etc is pretty crappy on mobile (post-jam fix?)
-* fade runes
 
 Polish / Bugs:
 * Remove short line when drawing a larger line directly over it

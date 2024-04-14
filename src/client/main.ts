@@ -980,11 +980,56 @@ function drawTriangle(x: number, y: number, z: number, rh: number, rv: number, u
   drawLine(x + rh, y0, x, y1, z, LINE_W, 1, color, LINE_CAP_ROUND);
 }
 
+type DemonVis = {
+  aw: number;
+  ah: number;
+  bw: number;
+  bh: number;
+  bup: boolean;
+  edx: number;
+  edy: number;
+};
+let vis_cache: Partial<Record<number, DemonVis>> = {};
+function getDemonVis(seed: number): DemonVis {
+  let ret = vis_cache[seed];
+  if (!ret) {
+    rand.reseed(seed);
+    let eye_angle = PI/4 + rand.random() * PI / 2;
+    let eye_len = 0.05 + rand.random() * 0.05;
+    ret = vis_cache[seed] = {
+      aw: 0.2 + rand.random() * 0.2,
+      ah: 0.2 + rand.random() * 0.2,
+      bw: 0.3 + rand.random() * 0.2,
+      bh: 0.05 + rand.random() * 0.1,
+      bup: rand.random() > 0.5,
+      edx: sin(eye_angle) * eye_len,
+      edy: cos(eye_angle) * eye_len,
+    };
+  }
+  return ret;
+}
+function rr(): number {
+  return (0.95 + 0.05 * Math.random());
+}
 function drawDemonPortrait(target: DemonTarget, x: number, y: number, w: number): void {
+  let vis = getDemonVis(target.seed);
   let xmid = x + w / 2;
   let ymid = y + w / 2;
-  let maxr = w * 0.35 * (0.9 + 0.1 * Math.random());
-  drawTriangle(xmid, ymid, Z.LINES, maxr, maxr, false, target.color);
+  let aw = w * rr() * vis.aw;
+  let ah = w * rr() * vis.ah;
+  let head_y = ymid - w * 0.1;
+  drawTriangle(xmid, head_y, Z.LINES, aw, ah, false, target.color);
+  let bw = w * rr() * vis.bw;
+  let bh = w * rr() * vis.bh;
+  let torso_y = ymid + w * 0.1;
+  drawTriangle(xmid, torso_y, Z.LINES, bw, bh, vis.bup, target.color);
+  let eyey = ymid - w * 0.25;
+  let eyex = xmid + w * 0.05;
+  let edx = w * vis.edx;
+  let edy = w * vis.edy;
+  drawLine(eyex, eyey, eyex + edx, eyey + edy, Z.LINES, LINE_W, 1, target.color, LINE_CAP_ROUND);
+  eyex = xmid - w * 0.05;
+  drawLine(eyex, eyey, eyex - edx, eyey + edy, Z.LINES, LINE_W, 1, target.color, LINE_CAP_ROUND);
 }
 
 const RUNE_W = POWER_R * 1.5;
@@ -1371,7 +1416,7 @@ function drawLevel(): void {
   });
   y += text_height * 1.5 + PAD;
   let demon_w_small = w/4;
-  let demon_w = beat_level ? demon_w_small : w / 2;
+  let demon_w = (beat_level && !engine.DEBUG) ? demon_w_small : w / 2;
   drawDemonPortrait(target, x + (w - demon_w)/2, y, demon_w);
 
   let button_w = BUTTONS_W;
@@ -1381,16 +1426,18 @@ function drawLevel(): void {
       x,
       y: button_y,
       icon: 'left',
+      hotkey: () => keyDownEdge(KEYS.MINUS),
     })) {
       level_idx--;
       getGameState();
     }
   }
-  if (level_idx >= FIXED_LEVELS || beat_level) {
+  if (level_idx >= FIXED_LEVELS || beat_level || engine.DEBUG) {
     if (myButton({
       icon: 'right',
       x: x + w - button_w,
       y: button_y,
+      hotkey: () => keyDownEdge(KEYS.EQUALS),
       disabled: () => level_idx === MAX_LEVEL - 1,
     })) {
       level_idx++;
