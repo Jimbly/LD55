@@ -1,7 +1,7 @@
 LD55 - Summoning
 ============================
 
-Ludum Dare 55 Entry by Jimbly - "Title TBD"
+Ludum Dare 55 Entry by Jimbly - "Summoning Circle Specialist"
 
 * Play here: [dashingstrike.com/LudumDare/LD55/](http://www.dashingstrike.com/LudumDare/LD55/)
 * Using [Javascript libGlov/GLOV.js framework](https://github.com/Jimbly/glovjs)
@@ -22,6 +22,7 @@ TODO:
 * Music
 * SFX/Music toggles
 * zen mode toggle
+* show one-line summary for each of the 4 modes when hovering over them; also allow hovering over the quadrant of the graph
 * Change level 10 notification to use overlay screen
 * Copy circle from previous if no save?  Start completely fresh beyond the first one?  Something more interesting as default?
 * Do X through Power to indicate deleting, not red circle

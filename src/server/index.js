@@ -38,6 +38,7 @@ app.use(express_static_gzip('data_store/public', {
 }));
 
 glov_server.startup({
+  font: 'ld55gochi',
   app,
   server,
   server_https,
