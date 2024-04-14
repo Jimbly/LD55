@@ -1,5 +1,5 @@
 /* globals CanvasRenderingContext2D, HTMLCanvasElement */
-/*eslint global-require:off*/
+/*eslint global-require:off, max-len:off*/
 // eslint-disable-next-line import/order
 const local_storage = require('glov/client/local_storage');
 local_storage.setStoragePrefix('ld55'); // Before requiring anything else that might load from this
@@ -31,13 +31,17 @@ import {
 } from 'glov/client/input';
 import { localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
 import { markdownAuto } from 'glov/client/markdown';
-import { markdownImageRegister } from 'glov/client/markdown_renderables';
+import { markdownImageRegister, markdownSetColorStyle } from 'glov/client/markdown_renderables';
 import { netInit } from 'glov/client/net';
 import {
   ScoreSystem,
   scoreAlloc,
 } from 'glov/client/score';
 import { scoresDraw } from 'glov/client/score_ui';
+import {
+  SPOT_DEFAULT_LABEL,
+  spot,
+} from 'glov/client/spot';
 import {
   BLEND_ADDITIVE,
   Sprite,
@@ -61,10 +65,13 @@ import {
   drawLine,
   drawRect,
   modalDialog,
+  panel,
   playUISound,
   scaleSizes,
   setButtonHeight,
   setFontHeight,
+  uiButtonHeight,
+  uiButtonWidth,
   uiTextHeight,
 } from 'glov/client/ui';
 import { randCreate } from 'glov/common/rand_alea';
@@ -102,6 +109,8 @@ Z.UI = 100;
 Z.GRAPH_OVERLAY = 100;
 Z.RUNES = 100; // Z.POWER;
 
+Z.OVERLAY = 200;
+
 // Virtual viewport for our game logic
 const game_width = 1920;
 const game_height = 1080;
@@ -131,6 +140,7 @@ const PALETTE_HOVER_DELETE = 3;
 const PALETTE_GLOW = 5;
 const PALETTE_GLOW_SUBDUED = 6;
 const PALETTE_SYMERROR = 3;
+const PALETTE_SYMMATCH = 1;
 const PALETTE_CRIM_BG = 7;
 const PALETTE_CRIM_TEXT = 7;
 const PALETTE_CRIM_BAR = 8;
@@ -159,6 +169,12 @@ const style_eval2 = fontStyle(null, {
   glow_outer: 7,
 });
 const style_help = style_eval;
+const style_help_highlight = fontStyle(style_eval, {
+  color: 0xFFFF80ff,
+});
+const style_help_term = fontStyle(style_eval, {
+  color: 0x80FFFFff,
+});
 
 const MC_X0 = 560;
 const MC_Y0 = 120;
@@ -807,6 +823,12 @@ function init(): void {
     sprite: autoAtlas('misc', 'gp'),
     frame: 0,
   });
+  markdownImageRegister('spacer', {
+    sprite: autoAtlas('misc', 'spacer'),
+    frame: 0,
+  });
+  markdownSetColorStyle(0, style_help_highlight);
+  markdownSetColorStyle(1, style_help_term);
 }
 
 function circAngleToXY(circ: number, ang: number): [number, number] {
@@ -1200,6 +1222,8 @@ function myScoreToRow(row: unknown[], score: Score): void {
   row.push(formatMatch(score.match));
 }
 
+let overlay_active = false;
+
 function drawLevel(): void {
   let x = PAD;
   let y = 80;
@@ -1297,7 +1321,7 @@ function drawLevel(): void {
   }
   scoresDraw<Score>({
     score_system,
-    allow_rename: true,
+    allow_rename: !overlay_active,
     x,
     width: w,
     y,
@@ -1316,14 +1340,117 @@ function drawLevel(): void {
   });
 }
 
+let show_initial_help = !engine.DEBUG;
+
+const OVERLAY_X = 40;
+const OVERLAY_W = game_width - OVERLAY_X * 2;
+const OVERLAY_Y = 10;
+const OVERLAY_H = game_height - OVERLAY_Y * 2;
+const OVERLAY_HPAD = 200;
+function doOverlay(type: 'help'): void {
+  overlay_active = true;
+
+  markdownAuto({
+    font_style: style_help,
+    x: OVERLAY_X + OVERLAY_HPAD,
+    y: OVERLAY_Y,
+    z: Z.OVERLAY,
+    w: OVERLAY_W - OVERLAY_HPAD * 2,
+    h: OVERLAY_H,
+    align: ALIGN.HVCENTER | ALIGN.HWRAP,
+    line_height: uiTextHeight() + 6,
+    text: `Welcome **Summoning Circle Specialist**!
+
+[img=spacer]
+
+Please help us summon demons by crafting a magic circle they will respond to!
+
+[img=spacer]
+
+Demons evaluate magic circles by the following properties:
+
+[c=0]Components[/c] - how many [c=1]circles[/c], [c=1]lines[/c], and runic [c=1]power[/c] nodes are drawn
+
+[c=0]Power[/c] - how close every drawn element is to a runic [c=1]power[/c] node
+
+[c=0]Cells[/c] - how many areas the space inside the circle is divided into
+
+[c=0]Symmetry[/c] - a [c=1]line[/c] or [c=1]power[/c] node is symmetrical if it has a matching element [c=1]rotated 180 degrees[/c], or [c=1]two matching elements rotated equally[/c] in each direction, or a matching element [c=1]mirrored horizontally[/c].
+
+[img=spacer]
+
+A detailed analysis of your current magic circle is shown on the right, and additional details about [c=0]symmetry[/c], [c=0]power[/c] and [c=0]components[/c] are shown if you select the category.
+
+You can view this information again at any time by selecting the "?" in the upper right.
+`
+  });
+
+  if (type === 'help' && show_initial_help) {
+    if (buttonText({
+      x: game_width - uiButtonWidth() - PAD,
+      y: game_height - uiButtonHeight() - PAD,
+      z: Z.OVERLAY + 2,
+      text: 'Let\'s go!',
+    })) {
+      show_initial_help = false;
+    }
+  }
+
+  panel({
+    x: OVERLAY_X,
+    y: OVERLAY_Y,
+    z: Z.OVERLAY - 1,
+    w: OVERLAY_W,
+    h: OVERLAY_H,
+    pixel_scale: 4,
+    sprite: autoAtlas('misc', 'overlay_panel'),
+    color: [1,1,1,0.8],
+  });
+  drawRect(camera2d.x0Real(), camera2d.y0Real(), camera2d.x1Real(), camera2d.y1Real(), Z.OVERLAY - 2,
+    [0,0,0,0.8]);
+}
+
 let mouse_pos = vec2();
 let was_drag = false;
 let highlight_symmetry_toggle = false;
+const HELP_W = 120;
+const HELP_X = game_width - 24 - HELP_W;
+const HELP_Y = 24;
 function statePlay(dt: number): void {
+  overlay_active = false;
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
   let { circles, lines, power, placing } = game_state;
 
   drawDemon2();
+
+  let spot_ret = spot({
+    def: SPOT_DEFAULT_LABEL,
+    x: HELP_X,
+    y: HELP_Y,
+    w: HELP_W,
+    h: HELP_W,
+  });
+  let show_help = spot_ret.focused || show_initial_help;
+  autoAtlas('misc', show_help ? 'help' : 'help_hover').draw({
+    x: HELP_X,
+    y: HELP_Y,
+    z: show_help ? Z.LINES : Z.UI,
+    w: HELP_W,
+    h: HELP_W,
+  });
+  if (show_help && !show_initial_help) {
+    autoAtlas('misc', 'help_hover').draw({
+      x: HELP_X,
+      y: HELP_Y,
+      z: Z.OVERLAY + 1,
+      w: HELP_W,
+      h: HELP_W,
+    });
+  }
+
+  if (show_help) {
+    doOverlay('help');
+  }
 
   let highlight_symmetry = highlight_symmetry_toggle;
   let highlight_cells = false;
@@ -1528,7 +1655,7 @@ function statePlay(dt: number): void {
     let line = lines[ii];
     let [x0, y0] = circAngleToXY(line[0], line[1]);
     let [x1, y1] = circAngleToXY(line[2], line[3]);
-    let pal = highlight_symmetry && !game_state.symmap.lines[ii] ? PALETTE_SYMERROR : PALETTE_LINE;
+    let pal = highlight_symmetry ? game_state.symmap.lines[ii] ? PALETTE_SYMMATCH : PALETTE_SYMERROR : PALETTE_LINE;
     drawLine(x0, y0, x1, y1, Z.LINES, LINE_W, 1, palette[pal]);
   }
   for (let ii = 0; ii < power.length; ++ii) {
