@@ -13,6 +13,9 @@ Start with: `npm start` (after running `npm i` once)
 
 
 TODO:
+* Probably: need some way to be viewing sym and power at the same time
+  * sym by colors (red/white)
+  * power by pulses (green?) running along it, with runes only showing up during pulse
 * Do X through Power to indicate deleting, not red circle
 * Highlight all lines and power red when highlighting a circle that would be deleted
 * hover/etc is pretty crappy on mobile (post-jam fix?)

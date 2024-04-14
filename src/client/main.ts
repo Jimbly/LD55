@@ -210,12 +210,15 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
   let symmetry = randFromRange(ranges.symmetry);
   let power = randFromRange(ranges.power);
 
-  let knowledge_points = [0.2, 0.4, 0.6, 0.8, 1];
+  //let knowledge_points = [0.2, 0.4, 0.6, 0.8, 1];
+  let knowledge_points = [0.2, 0.5, 0.75, 1];
   for (let ii = 0; ii < knowledge_points.length - 1; ++ii) {
-    knowledge_points[ii] += (rand.range(19) - 9) / 100;
+    knowledge_points[ii] += (rand.range(13) - 11) / 100;
   }
-  let knowledge_ordering: EvalType[] = ['components', 'ink', 'symmetry', 'cells', 'power'];
+  rand.range(1); // 'ink'
+  let knowledge_ordering: EvalType[] = ['components', 'symmetry', 'cells', 'power']; // 'ink'
   shuffleArray(rand, knowledge_ordering);
+  rand.range(1); // 'ink'
   let value = 100 + rand.range(901);
 
   let name;
@@ -267,8 +270,10 @@ function evalMatch(evaluation: Evaluation, demon: DemonTarget): [number, number]
   let min_match = 0;
   let max_match = 0;
   let any_known = false;
-  for (let ii = 0; ii < demon.knowledge_ordering.length; ++ii) {
-    let eval_type = demon.knowledge_ordering[ii];
+  let { knowledge_ordering } = demon;
+  let num_evals = knowledge_ordering.length;
+  for (let ii = 0; ii < num_evals; ++ii) {
+    let eval_type = knowledge_ordering[ii];
     let is_known = demon.knowledge_points[ii] <= demon.knowledge;
     if (!is_known) {
       min_match += 1;
@@ -283,7 +288,7 @@ function evalMatch(evaluation: Evaluation, demon: DemonTarget): [number, number]
         match = 100;
       } else {
         match = 1 - (match - MATCH_PERFECT) / (1 - MATCH_PERFECT);
-        match = round(match * match * 100);
+        match = min(99, round(match * match * 100));
       }
       min_match += match;
       max_match += match;
@@ -292,7 +297,13 @@ function evalMatch(evaluation: Evaluation, demon: DemonTarget): [number, number]
   if (!any_known) {
     return null;
   }
-  return [round(min_match / 5), round(max_match / 5)];
+  let mn = round(min_match / num_evals);
+  let mx = round(max_match / num_evals);
+  if (max_match !== num_evals * 100) {
+    mx = min(mx, 99);
+    mn = min(mn, 99);
+  }
+  return [mn, mx];
 }
 
 class GameState {
@@ -815,9 +826,9 @@ function queuePostprocess(highlight_symmetry: boolean): void {
 const EVALS: [EvalType, string][] = [
   ['components', 'Components'],
   ['cells', 'Cells'],
-  ['ink', 'Ink'],
-  ['symmetry', 'Symmetry'],
+  // ['ink', 'Ink'],
   ['power', 'Power'],
+  ['symmetry', 'Symmetry'],
 ];
 
 const RUNE_W = POWER_R * 1.5;
@@ -833,6 +844,7 @@ const DEMON_PORTRAIT_Y = 37;
 const DEMON_KNOW_BAR = 18;
 const EVAL_BAR_H = 26;
 const EVAL_BAR_W = 160;
+const EVAL_BAR_PAD = 9;
 const style_crim_text = fontStyle(null, {
   color: font_palette[PALETTE_CRIM_TEXT],
   glow_color: font_palette[PALETTE_CRIM_BG] & 0xFFFFFF00 | 0x50,
@@ -929,7 +941,7 @@ function drawDemons(): void {
       });
     }
 
-    let yy = y + 32;
+    let yy = y + 32 + EVAL_BAR_PAD;
     let bar_x = x0 + DEMON_W - DEMON_BORDER - 2 - EVAL_BAR_W;
     let text_x = x0 + 148;
 
@@ -997,7 +1009,7 @@ function drawDemons(): void {
         w: EVAL_BAR_W + 2,
         h: EVAL_BAR_H + 2,
       }, sprite_bar_border, palette[PALETTE_CRIM_BG]);
-      yy += EVAL_BAR_H + 4;
+      yy += EVAL_BAR_H + EVAL_BAR_PAD;
     }
 
     y += DEMON_H + PAD;
