@@ -39,6 +39,7 @@ import {
   scoreAlloc,
 } from 'glov/client/score';
 import { scoresDraw } from 'glov/client/score_ui';
+import { FADE, soundPlayMusic, soundResumed } from 'glov/client/sound';
 import {
   SPOT_DEFAULT_LABEL,
   spot,
@@ -74,6 +75,7 @@ import {
   scaleSizes,
   setButtonHeight,
   setFontHeight,
+  uiBindSounds,
   uiButtonHeight,
   uiButtonWidth,
   uiTextHeight,
@@ -444,7 +446,7 @@ class GameState {
       canvas = this.area_canvas = document.createElement('canvas');
       canvas.width = w;
       canvas.height = w;
-      this.area_ctx = canvas.getContext('2d');
+      this.area_ctx = canvas.getContext('2d', { willReadFrequently: true });
     }
     let ctx = this.area_ctx;
     assert(ctx);
@@ -1082,6 +1084,7 @@ function drawDemon2(): void {
   let show_mine = !spot({
     def: SPOT_DEFAULT_LABEL,
     ...target_hotspot,
+    sound_rollover: 'rollover',
   }).focused;
   if (!show_mine) {
     drawElipse(target_hotspot.x, target_hotspot.y, target_hotspot.x + target_hotspot.w, target_hotspot.y + target_hotspot.h,
@@ -1339,7 +1342,6 @@ function myButton(param: {
   tooltip?: string;
   hotkey?: () => boolean;
 }): boolean {
-  let ret = false;
   let disabled = Boolean(param.disabled && param.disabled());
   let button_param = {
     x: param.x,
@@ -1350,14 +1352,16 @@ function myButton(param: {
     shrink: 1,
   };
   let sprite = autoAtlas('misc', disabled ? `${param.icon}` : `${param.icon}_hover`);
-  if (buttonImage({
+  let ret = Boolean(buttonImage({
     ...button_param,
     img: sprite,
     color: disabled ? color_disabled : undefined,
     no_bg: true,
     disabled,
     tooltip: param.tooltip,
-  }) || !disabled && param.hotkey && param.hotkey()) {
+  }));
+  if (!ret && !disabled && param.hotkey && param.hotkey()) {
+    playUISound('button_click');
     ret = true;
   }
   if (buttonWasFocused()) {
@@ -1402,7 +1406,7 @@ function drawLevel(): void {
     text: `Target #${level_idx+1}:`,
   });
 
-  let beat_level = game_state.best_score > 800;
+  let beat_level = game_state.best_score > 800 || engine.DEBUG;
   let show_high_scores = level_idx > 0 || beat_level;
 
   y += text_height + PAD;
@@ -1416,7 +1420,7 @@ function drawLevel(): void {
   });
   y += text_height * 1.5 + PAD;
   let demon_w_small = w/4;
-  let demon_w = (beat_level && !engine.DEBUG) ? demon_w_small : w / 2;
+  let demon_w = beat_level ? demon_w_small : w / 2;
   drawDemonPortrait(target, x + (w - demon_w)/2, y, demon_w);
 
   let button_w = BUTTONS_W;
@@ -1432,7 +1436,7 @@ function drawLevel(): void {
       getGameState();
     }
   }
-  if (level_idx >= FIXED_LEVELS || beat_level || engine.DEBUG) {
+  if (level_idx >= FIXED_LEVELS || beat_level) {
     if (myButton({
       icon: 'right',
       x: x + w - button_w,
@@ -1599,6 +1603,7 @@ A detailed analysis of your current magic circle is shown on the right, and addi
     [0,0,0,0.8]);
 }
 
+let want_music = true;
 let mouse_pos = vec2();
 let was_drag = false;
 let highlight_toggle: Partial<Record<EvalType, boolean>> = {};
@@ -1635,13 +1640,44 @@ const BUTTONS = [{
       keyDown(KEYS.SHIFT) && keyDownEdge(KEYS.Z)
     );
   },
+}, {
+  icon: 'music',
+  tooltip: 'Toggle background music',
+  cb: function () {
+    want_music = !want_music;
+  },
 }];
+
+let music_playing = false;
+let hack_once = false;
+function tickMusic(): void {
+  BUTTONS[2].icon = want_music ? 'music' : 'music_off';
+  if (!soundResumed()) {
+    return;
+  }
+  if (!music_playing && want_music) {
+    soundPlayMusic('bgm', 0.5, FADE);
+    music_playing = true;
+    if (!hack_once) {
+      hack_once = true;
+      setTimeout(function () {
+        soundPlayMusic('bgm', 0.5);
+      }, 1000);
+    }
+  }
+  if (music_playing && !want_music) {
+    soundPlayMusic('bgm', 0, FADE);
+    music_playing = false;
+  }
+}
 
 function statePlay(dt: number): void {
   overlay_active = false;
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
 
   drawDemon2();
+
+  tickMusic();
 
   let spot_ret = spot({
     def: SPOT_DEFAULT_LABEL,
@@ -1650,6 +1686,7 @@ function statePlay(dt: number): void {
     w: HELP_W,
     h: HELP_W,
     pad_focusable: false,
+    sound_rollover: 'rollover',
   });
   let show_help = spot_ret.focused || keyDown(KEYS.F1);
   autoAtlas('misc', show_help ? 'help' : 'help_hover').draw({
@@ -1798,6 +1835,7 @@ function statePlay(dt: number): void {
       if (spot({
         def: SPOT_DEFAULT_LABEL,
         ...hotspot,
+        sound_rollover: 'rollover',
       }).focused) {
         do_hover = true;
         hover[pair[0]] = true;
@@ -1952,10 +1990,10 @@ function statePlay(dt: number): void {
     }
   }
 
-  let right_click: [string, VoidFunc] | null = null;
-  let left_click: [string, VoidFunc] | null = null;
-  let drag_start: [string, VoidFunc] | null = null;
-  let drag_stop: [string, VoidFunc] | null = null;
+  let right_click: [string, string, VoidFunc] | null = null;
+  let left_click: [string, string, VoidFunc] | null = null;
+  let drag_start: [string, string, VoidFunc] | null = null;
+  let drag_stop: [string, string, VoidFunc] | null = null;
   if (do_hover && !drag) {
     // CIRCLE logic
     if (cursor_circle !== -1 && cursor_circle_dist < CIRCLE_INTERACT_DIST) {
@@ -1964,6 +2002,7 @@ function statePlay(dt: number): void {
       //   LINE_W_DELETE, 1, palette[PALETTE_HOVER_DELETE]);
       right_click = [
         'Erase circle',
+        'remove',
         function () {
           let tail = circles.length - 1;
           for (let ii = lines.length - 1; ii >= 0; --ii) {
@@ -1999,6 +2038,7 @@ function statePlay(dt: number): void {
           LINE_W / 2, 1, palette[PALETTE_HOVER]);
         left_click = [
           'Draw circle',
+          'add',
           function () {
             circles.push(circle_r);
           },
@@ -2037,6 +2077,7 @@ function statePlay(dt: number): void {
       if (valid) {
         left_click = [
           would_remove ? 'Erase Power Node' : 'Draw Power Node',
+          would_remove ? 'remove' : 'add',
           function () {
             let removed = false;
             for (let ii = 0; ii < power.length; ++ii) {
@@ -2060,6 +2101,9 @@ function statePlay(dt: number): void {
   if (do_hover) {
     // LINE logic
     if (drag_start_circle !== -1) {
+      if (!game_state.placing) {
+        playUISound('drag_start');
+      }
       placing = game_state.placing = [drag_start_circle, drag_start_angle];
       let [sx, sy] = circAngleToXY(drag_start_circle, drag_start_angle);
       drawCircle(sx, sy, Z.HOVER, LINE_W * 2, 0.5, palette[PALETTE_HOVER]);
@@ -2101,6 +2145,7 @@ function statePlay(dt: number): void {
           }
           drag_stop = [
             would_remove ? 'Erase line' : 'Draw line',
+            would_remove ? 'remove' : 'add',
             function () {
               let removed = false;
               for (let ii = 0; ii < lines.length; ++ii) {
@@ -2119,6 +2164,7 @@ function statePlay(dt: number): void {
         } else {
           drag_start = [
             'Draw/Erase line',
+            'drag_start',
             nop,
           ];
           let line_to_remove: number | null = null;
@@ -2135,6 +2181,7 @@ function statePlay(dt: number): void {
             drawLine(sx, sy, tx2, ty2, Z.HOVER, LINE_W_DELETE, 0.5, palette[PALETTE_HOVER_DELETE]);
             right_click = [
               'Erase line',
+              'remove',
               function () {
                 lines.splice(line_to_remove!, 1);
               },
@@ -2149,6 +2196,7 @@ function statePlay(dt: number): void {
           palette[PALETTE_HOVER_DELETE]);
         drag_stop = [
           'Draw line (too short)',
+          '',
           nop,
         ];
       }
@@ -2158,6 +2206,7 @@ function statePlay(dt: number): void {
         palette[PALETTE_HOVER]);
       drag_stop = [
         'Draw line',
+        'add',
         nop,
       ];
     }
@@ -2173,9 +2222,11 @@ function statePlay(dt: number): void {
       text: `Left-click: ${left_click[0]}`,
     });
     if (inputClick({ button: 0 })) {
-      if (left_click[1] !== nop) {
-        playUISound('button_click');
-        left_click[1]();
+      if (left_click[2] !== nop) {
+        if (left_click[1]) {
+          playUISound(left_click[1]);
+        }
+        left_click[2]();
       }
       game_state.commit();
     }
@@ -2189,14 +2240,17 @@ function statePlay(dt: number): void {
       text: `Drag: ${drag_start ? drag_start[0] : drag_stop![0]}`,
     });
     if (drag && !was_drag && drag_start) {
-      // playUISound('button_click');
-      drag_start[1]();
-      // game_state.commit();
+      if (drag_start[1]) {
+        playUISound(drag_start[1]);
+      }
+      drag_start[2]();
     }
     if (was_drag && !drag && drag_stop) {
-      if (drag_stop[1] !== nop) {
-        playUISound('button_click');
-        drag_stop[1]();
+      if (drag_stop[2] !== nop) {
+        if (drag_stop[1]) {
+          playUISound(drag_stop[1]);
+        }
+        drag_stop[2]();
       }
       game_state.commit();
     }
@@ -2233,8 +2287,10 @@ function statePlay(dt: number): void {
       text: `Right-click: ${right_click[0]}`,
     });
     if (inputClick({ button: 2 }) || inputTouchMode() && longPress({ min_time: 1000 }) || keyDownEdge(KEYS.DEL)) {
-      playUISound('button_click');
-      right_click[1]();
+      if (right_click[1]) {
+        playUISound(right_click[1]);
+      }
+      right_click[2]();
       game_state.commit();
     }
   }
@@ -2280,12 +2336,20 @@ export function main(): void {
     ui_sprites,
     pixel_perfect,
     line_mode: 0,
+    do_borders: false,
   })) {
     return;
   }
   font = engine.font;
 
-  // Perfect sizes for pixely modes
+  uiBindSounds({
+    button_click: { file: 'button_click', volume: 0.5 },
+    rollover: { file: 'rollover', volume: 0.25 },
+    add: ['add', 'add2', 'add3', 'add4', 'add5'],
+    remove: ['remove', 'remove2', 'remove3', 'remove4'],
+    drag_start: 'drag_start',
+  });
+
   scaleSizes(32 / 32);
   setFontHeight(32);
   setButtonHeight(48);

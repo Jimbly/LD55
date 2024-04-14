@@ -13,9 +13,6 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* SFX
-* Music
-* SFX/Music toggles
 * zen mode toggle
 * Change level 10 notification to use overlay screen
 * Copy circle from previous if no save?  Start completely fresh beyond the first one?  Something more interesting as default?
