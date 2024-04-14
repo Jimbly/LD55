@@ -13,7 +13,6 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* split intro separate from help - both shorter; F11 hint in intro
 * Probably: need some way to be viewing sym and power at the same time
   * sym by colors (red/white)
   * power by pulses (green?) running along it, with runes only showing up during pulse

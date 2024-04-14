@@ -865,6 +865,10 @@ function init(): void {
     sprite: autoAtlas('misc', 'spacer'),
     frame: 0,
   });
+  markdownImageRegister('help', {
+    sprite: autoAtlas('misc', 'help_hover'),
+    frame: 0,
+  });
   markdownSetColorStyle(0, style_help_highlight);
   markdownSetColorStyle(1, style_help_term);
 }
@@ -979,9 +983,10 @@ function formatMatch(v: number): string {
   return `${v}%`;
 }
 
-const GRAPH_W = 940/2;
-const GRAPH_H = 1536/2;
-const GRAPH_R = 340/2;
+const GRAPH_SCALE = 1.1;
+const GRAPH_W = 940/2 * GRAPH_SCALE;
+const GRAPH_H = 1536/2 * GRAPH_SCALE;
+const GRAPH_R = 340/2 * GRAPH_SCALE;
 const GRAPH_MIN_R = 0.1;
 let eval_pos: [Vec2, Vec2, Vec2, Vec2] = [vec2(), vec2(), vec2(), vec2()];
 function drawDemon2(): void {
@@ -997,20 +1002,20 @@ function drawDemon2(): void {
   });
 
   let xc = x0 + GRAPH_W/2;
-  let yc = y + 974/2;
-  v2set(eval_pos[0], x0 + 313/2, y + 242/2);
-  v2set(eval_pos[1], x0 + (940 - 313)/2, y + 242/2);
-  v2set(eval_pos[2], x0 + 313/2, y + 422/2);
-  v2set(eval_pos[3], x0 + (940 - 313)/2, y + 422/2);
+  let yc = y + 974/2*GRAPH_SCALE;
+  v2set(eval_pos[0], x0 + 313/2*GRAPH_SCALE, y + 242/2*GRAPH_SCALE);
+  v2set(eval_pos[1], x0 + (940 - 313)/2*GRAPH_SCALE, y + 242/2*GRAPH_SCALE);
+  v2set(eval_pos[2], x0 + 313/2*GRAPH_SCALE, y + 422/2*GRAPH_SCALE);
+  v2set(eval_pos[3], x0 + (940 - 313)/2*GRAPH_SCALE, y + 422/2*GRAPH_SCALE);
 
   let my_lines: [number, number][] = [];
   let my_y2: number[] = [];
   let target_lines: [number, number][] = [];
   let target_y2: number[] = [];
-  const font_height = uiTextHeight() * 0.8;
+  const font_height = uiTextHeight() * 0.8 * GRAPH_SCALE;
   let show_mine = !mouseOver({
-    x: x0, y: y + GRAPH_H - 80,
-    w: GRAPH_W, h: 80,
+    x: x0, y: y + GRAPH_H - 80*GRAPH_SCALE,
+    w: GRAPH_W, h: 60*GRAPH_SCALE,
   });
   for (let jj = 0; jj < EVALS.length; ++jj) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1042,10 +1047,10 @@ function drawDemon2(): void {
     }
     let text_w = font.getStringWidth(style_eval, font_height, value);
     let desired_x = show_mine ? myx : targetx;
-    let desired_y = (show_mine ? myy : targety) + 2;
-    const minipad = 8;
+    let desired_y = (show_mine ? myy : targety) + 2*GRAPH_SCALE;
+    const minipad = 8*GRAPH_SCALE;
     if (jj === 0) {
-      desired_y -= font_height + 2;
+      desired_y -= font_height + 2*GRAPH_SCALE;
       desired_y = clamp(desired_y, yc - GRAPH_R + minipad, yc - font_height - minipad);
     } else if (jj === 2) {
       desired_y = clamp(desired_y, yc + minipad, yc + GRAPH_R - font_height - minipad);
@@ -1062,7 +1067,7 @@ function drawDemon2(): void {
   let last = my_lines[3];
   for (let ii = 0; ii < my_lines.length; ++ii) {
     let pos = my_lines[ii];
-    drawLine(last[0], last[1], pos[0], pos[1], Z.LINES + 1, 3, 1, [0.5,1,1,1]);
+    drawLine(last[0], last[1], pos[0], pos[1], Z.LINES + 1, 3*GRAPH_SCALE, 1, [0.5,1,1,1]);
     last = pos;
   }
 
@@ -1441,8 +1446,49 @@ const OVERLAY_W = game_width - OVERLAY_X * 2;
 const OVERLAY_Y = 10;
 const OVERLAY_H = game_height - OVERLAY_Y * 2;
 const OVERLAY_HPAD = 200;
-function doOverlay(type: 'help'): void {
+function doOverlay(type: 'help' | 'intro'): void {
   overlay_active = true;
+
+  let msg: string;
+  if (type === 'intro') {
+    msg = `[c=2]HINT: Press F11 to toggle full-screen.[/c]
+
+[img=spacer]
+
+Welcome, [c=1]Summoning Circle Specialist[/c]!
+
+[img=spacer]
+
+The Institution has been alerted to a number of demons causing havoc.  So that we can, uh, **deal** with them, please help us summon them here by designing a magic circle they will respond to!
+
+[img=spacer]
+
+Each demon has its own tastes, and will evaluate your magic circle based on its number of [c=0]Components[/c], distribution of [c=0]Power[/c], number of [c=0]Cells[/c], and [c=0]Symmetry[/c].
+
+[img=spacer]
+
+[c=2]HINT: View detailed help information at any time by selecting the [img=help scale=1.5] in the upper right.[/c]
+`;
+  } else if (type === 'help') {
+    msg = `Demons evaluate magic circles by the following properties:
+
+[img=spacer]
+
+[c=0]Components[/c] - how many [c=1]circles[/c], [c=1]lines[/c], and runic [c=1]power[/c] nodes are drawn
+
+[c=0]Power[/c] - how close every drawn element is to a runic [c=1]power[/c] node
+
+[c=0]Cells[/c] - how many areas the empty space inside the circle is divided into
+
+[c=0]Symmetry[/c] - a [c=1]line[/c] or [c=1]power[/c] node counts as symmetrical if it has a matching element [c=1]rotated 180 degrees[/c], or [c=1]two matching elements rotated equally[/c] in each direction, or a matching element [c=1]mirrored horizontally[/c].
+
+[img=spacer]
+
+A detailed analysis of your current magic circle is shown on the right, and additional details about [c=0]symmetry[/c], [c=0]power[/c] and [c=0]components[/c] are shown if you select the category.
+`;
+  } else {
+    assert(false);
+  }
 
   markdownAuto({
     font_style: style_help,
@@ -1453,35 +1499,12 @@ function doOverlay(type: 'help'): void {
     h: OVERLAY_H,
     align: ALIGN.HVCENTER | ALIGN.HWRAP,
     line_height: uiTextHeight() + 6,
-    text: `Welcome **Summoning Circle Specialist**!
-
-${show_initial_help ? '[c=2]View this information at any time by selecting the "?" in the upper right.[/c]' : ''}
-
-[img=spacer]
-
-Please help us summon demons by crafting a magic circle they will respond to!
-
-[img=spacer]
-
-Demons evaluate magic circles by the following properties:
-
-[c=0]Components[/c] - how many [c=1]circles[/c], [c=1]lines[/c], and runic [c=1]power[/c] nodes are drawn
-
-[c=0]Power[/c] - how close every drawn element is to a runic [c=1]power[/c] node
-
-[c=0]Cells[/c] - how many areas the space inside the circle is divided into
-
-[c=0]Symmetry[/c] - a [c=1]line[/c] or [c=1]power[/c] node is symmetrical if it has a matching element [c=1]rotated 180 degrees[/c], or [c=1]two matching elements rotated equally[/c] in each direction, or a matching element [c=1]mirrored horizontally[/c].
-
-[img=spacer]
-
-A detailed analysis of your current magic circle is shown on the right, and additional details about [c=0]symmetry[/c], [c=0]power[/c] and [c=0]components[/c] are shown if you select the category.
-`
+    text: msg
   });
 
-  if (type === 'help' && show_initial_help) {
+  if (type === 'intro') {
     if (buttonText({
-      x: game_width - uiButtonWidth() - PAD,
+      x: (game_width - uiButtonWidth()) / 2,
       y: game_height - uiButtonHeight() - PAD,
       z: Z.OVERLAY + 2,
       text: 'Let\'s go!',
@@ -1508,10 +1531,11 @@ let mouse_pos = vec2();
 let was_drag = false;
 let highlight_symmetry_toggle = false;
 const HELP_W = 120;
-const HELP_X = game_width - 24 - HELP_W;
-const HELP_Y = 24;
-const BUTTONS_X1 = game_width - 24;
-const BUTTONS_Y0 = game_height - 24 - BUTTONS_W;
+const BUTTON_PAD = 16;
+const HELP_X = game_width - BUTTON_PAD - HELP_W;
+const HELP_Y = BUTTON_PAD;
+const BUTTONS_X1 = game_width - BUTTON_PAD;
+const BUTTONS_Y0 = game_height - BUTTON_PAD - BUTTONS_W;
 const BUTTONS = [{
   icon: 'undo',
   tooltip: 'Undo [Ctrl-Z]',
@@ -1555,7 +1579,7 @@ function statePlay(dt: number): void {
     h: HELP_W,
     pad_focusable: false,
   });
-  let show_help = spot_ret.focused || show_initial_help || keyDown(KEYS.F1);
+  let show_help = spot_ret.focused || keyDown(KEYS.F1);
   autoAtlas('misc', show_help ? 'help' : 'help_hover').draw({
     x: HELP_X,
     y: HELP_Y,
@@ -1573,7 +1597,9 @@ function statePlay(dt: number): void {
     });
   }
 
-  if (show_help) {
+  if (show_initial_help) {
+    doOverlay('intro');
+  } else if (show_help) {
     doOverlay('help');
   }
 
