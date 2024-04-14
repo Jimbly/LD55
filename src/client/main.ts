@@ -84,9 +84,9 @@ Z.CIRCLES = 10;
 Z.LINES = 9;
 Z.POWER = 11;
 Z.POSTPROCESS = 15;
-Z.HOVER = 20;
 Z.DEMON = 50;
 Z.POSTPROCESS_LATE = Z.DEMON + 4.5;
+Z.HOVER = 60;
 Z.UI = 100;
 Z.RUNES = 100; // Z.POWER;
 
@@ -200,9 +200,9 @@ type DemonTarget = {
   knowledge: number;
 } & Record<EvalType, number>;
 let ranges: Record<EvalType, [number, number]> = {
-  components: [1, 40],
+  components: [3, 40],
   ink: [25, 450],
-  cells: [1, 50],
+  cells: [2, 50],
   symmetry: [0, 100],
   power: [5, 100],
 };
@@ -296,8 +296,9 @@ function evalMatch(evaluation: Evaluation, demon: DemonTarget): [number, number]
       if (match < MATCH_PERFECT) {
         match = 100;
       } else {
-        match = 1 - (match - MATCH_PERFECT) / (1 - MATCH_PERFECT);
-        match = min(99, round(match * match * 100));
+        match = (match - MATCH_PERFECT) / (1 - MATCH_PERFECT); // 0...1 again
+        match = max(0, 1 - match * 2);
+        match = clamp(round(match * match * 100), 1, 99);
       }
       min_match += match;
       max_match += match;
