@@ -14,6 +14,7 @@ import {
   ALIGN,
   Font,
   fontStyle,
+  fontStyleColored,
   intColorFromVec4Color,
   vec4ColorFromIntColor,
 } from 'glov/client/font';
@@ -33,6 +34,11 @@ import { markdownAuto } from 'glov/client/markdown';
 import { markdownImageRegister } from 'glov/client/markdown_renderables';
 import { netInit } from 'glov/client/net';
 import {
+  ScoreSystem,
+  scoreAlloc,
+} from 'glov/client/score';
+import { scoresDraw } from 'glov/client/score_ui';
+import {
   BLEND_ADDITIVE,
   Sprite,
   Texture,
@@ -48,18 +54,19 @@ import {
 } from 'glov/client/textures';
 import {
   LINE_CAP_ROUND,
+  buttonText,
   drawCircle,
   drawHBox,
   drawLine,
   drawRect,
-  drawRect2,
+  modalDialog,
   playUISound,
   scaleSizes,
   setButtonHeight,
   setFontHeight,
   uiTextHeight,
 } from 'glov/client/ui';
-import { randCreate, shuffleArray } from 'glov/common/rand_alea';
+import { randCreate } from 'glov/common/rand_alea';
 import { DataObject, TSMap, VoidFunc } from 'glov/common/types';
 import { clamp, nop, ridx } from 'glov/common/util';
 import {
@@ -189,15 +196,7 @@ type DemonTarget = {
   // gen-time
   color: Vec4;
   name: string;
-  value: number;
-  knowledge_points: number[];
-  knowledge_ordering: EvalType[];
   seed: number;
-
-  // run-time
-  min_found: number;
-  max_found: number;
-  knowledge: number;
 } & Record<EvalType, number>;
 let ranges: Record<EvalType, [number, number]> = {
   components: [3, 40],
@@ -206,27 +205,26 @@ let ranges: Record<EvalType, [number, number]> = {
   symmetry: [0, 100],
   power: [5, 100],
 };
-function randFromRange(range: [number, number]): number {
-  return range[0] + rand.range(range[1] - range[0] + 1);
+function randFromRange(range: [number, number], normalize: number): number {
+  if (normalize <= 1) {
+    return range[0] + rand.range(range[1] - range[0] + 1);
+  }
+  let ret = 0;
+  for (let ii = 0; ii < normalize; ii++) {
+    ret += randFromRange(range, 0);
+  }
+
+  return round(ret / normalize);
 }
 function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
 
-  let components = randFromRange(ranges.components);
-  let ink = randFromRange(ranges.ink);
-  let cells = randFromRange(ranges.cells);
-  let symmetry = randFromRange(ranges.symmetry);
-  let power = randFromRange(ranges.power);
+  let components = randFromRange(ranges.components, 2);
+  let ink = randFromRange(ranges.ink, 0);
+  let cells = randFromRange(ranges.cells, 0);
+  let symmetry = randFromRange(ranges.symmetry, 0);
+  let power = randFromRange(ranges.power, 0);
 
   //let knowledge_points = [0.2, 0.4, 0.6, 0.8, 1];
-  let knowledge_points = [0.2, 0.5, 0.75, 1];
-  for (let ii = 0; ii < knowledge_points.length - 1; ++ii) {
-    knowledge_points[ii] += (rand.range(13) - 11) / 100;
-  }
-  rand.range(1); // 'ink'
-  let knowledge_ordering: EvalType[] = ['components', 'symmetry', 'cells', 'power']; // 'ink'
-  shuffleArray(rand, knowledge_ordering);
-  rand.range(1); // 'ink'
-  let value = 100 + rand.range(901);
   let seed = rand.range(10000);
 
   let name;
@@ -234,7 +232,7 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
     name = randomDemonName(rand);
     let found = false;
     for (let ii = 0; ii < existing.length; ++ii) {
-      if (existing[ii].color === name[1]) {
+      if (existing[ii].color === name[1] && ii > existing.length - 3) {
         found = true;
       } else if (existing[ii].name.endsWith(name[0].split(' ')[1])) {
         found = true;
@@ -253,67 +251,54 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
     cells,
     symmetry,
     power,
-    value,
-    knowledge_points,
-    knowledge_ordering,
     seed,
-
-    min_found: 0,
-    max_found: 0,
-    knowledge: 1,
   };
 }
 
+export type Score = {
+  match: number;
+};
+let score_system: ScoreSystem<Score>;
+
 const MATCH_PERFECT = 0.05;
 
-function evalKnown(demon: DemonTarget, eval_type: EvalType): boolean {
-  for (let ii = 0; ii < demon.knowledge_ordering.length; ++ii) {
-    if (demon.knowledge_ordering[ii] === eval_type) {
-      return demon.knowledge_points[ii] <= demon.knowledge;
+const EVALS: [EvalType, string][] = [
+  ['components', 'Components'],
+  ['cells', 'Cells'],
+  // ['ink', 'Ink'],
+  ['power', 'Power'],
+  ['symmetry', 'Symmetry'],
+];
+
+function evalMatch(evaluation: Evaluation, demon: DemonTarget): number {
+  let match_sum = 0;
+  let num_evals = EVALS.length;
+  for (let ii = 0; ii < num_evals; ++ii) {
+    let eval_type = EVALS[ii][0];
+    let range = ranges[eval_type];
+    let my_v = clamp((evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
+    let desired_v = (demon[eval_type] - range[0]) / (range[1] - range[0]);
+    let match = abs(my_v - desired_v); // 0...1
+    if (match < MATCH_PERFECT) {
+      match = 1000;
+    } else {
+      match = (match - MATCH_PERFECT) / (1 - MATCH_PERFECT); // 0...1 again
+      match = max(0, 1 - match * 2);
+      match = clamp(round(match * match * 1000), 0, 999);
     }
+    match_sum += match;
   }
-  return false;
+  let ret = round(match_sum / num_evals);
+  if (match_sum !== num_evals * 1000) {
+    ret = min(ret, 999);
+  }
+  return ret;
 }
 
-function evalMatch(evaluation: Evaluation, demon: DemonTarget): [number, number] | null {
-  let min_match = 0;
-  let max_match = 0;
-  let any_known = false;
-  let { knowledge_ordering } = demon;
-  let num_evals = knowledge_ordering.length;
-  for (let ii = 0; ii < num_evals; ++ii) {
-    let eval_type = knowledge_ordering[ii];
-    let is_known = demon.knowledge_points[ii] <= demon.knowledge;
-    if (!is_known) {
-      min_match += 1;
-      max_match += 100;
-    } else {
-      any_known = true;
-      let range = ranges[eval_type];
-      let my_v = clamp((evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
-      let desired_v = (demon[eval_type] - range[0]) / (range[1] - range[0]);
-      let match = abs(my_v - desired_v); // 0...1
-      if (match < MATCH_PERFECT) {
-        match = 100;
-      } else {
-        match = (match - MATCH_PERFECT) / (1 - MATCH_PERFECT); // 0...1 again
-        match = max(0, 1 - match * 2);
-        match = clamp(round(match * match * 100), 1, 99);
-      }
-      min_match += match;
-      max_match += match;
-    }
-  }
-  if (!any_known) {
-    return null;
-  }
-  let mn = round(min_match / num_evals);
-  let mx = round(max_match / num_evals);
-  if (max_match !== num_evals * 100) {
-    mx = min(mx, 99);
-    mn = min(mn, 99);
-  }
-  return [mn, mx];
+rand.reseed(1234);
+let fixed_targets: DemonTarget[] = [];
+for (let ii = 0; ii < 10; ++ii) {
+  fixed_targets.push(randomDemonTarget(fixed_targets));
 }
 
 class GameState {
@@ -327,39 +312,39 @@ class GameState {
     symcount: number;
     symmax: number;
   };
-  targets: DemonTarget[];
-  constructor(seed: number) {
-    rand.reseed(seed);
-    if (engine.DEBUG) {
-      let saved = localStorageGetJSON<DataObject>('state');
-      if (saved) {
-        this.circles = saved.circles as number[];
-        this.lines = saved.lines as [number, number, number, number][];
-        this.power = saved.power as [number, number][];
-        // fixup bad debug data
-        for (let ii = 0; ii < this.lines.length; ++ii) {
-          canonicalLine(this.lines[ii]);
-        }
-        for (let ii = 0; ii < this.power.length; ++ii) {
-          this.power[ii][1] = (this.power[ii][1] + ANGLE_STEPS) % ANGLE_STEPS;
-        }
+  target: DemonTarget;
+  best_score: number = 0;
+  cur_score: number = 0;
+  did_anything = false;
+  constructor(public level_idx: number) {
+    rand.reseed(level_idx * 1007);
+    let saved = localStorageGetJSON<DataObject>(`save.${level_idx}`);
+    if (saved) {
+      this.circles = saved.circles as number[];
+      this.lines = saved.lines as [number, number, number, number][];
+      this.power = saved.power as [number, number][];
+      this.best_score = saved.best_score as number || 0;
+      // fixup bad debug data
+      for (let ii = 0; ii < this.lines.length; ++ii) {
+        canonicalLine(this.lines[ii]);
+      }
+      for (let ii = 0; ii < this.power.length; ++ii) {
+        this.power[ii][1] = (this.power[ii][1] + ANGLE_STEPS) % ANGLE_STEPS;
       }
     }
-    this.evaluate();
 
-    let targets: DemonTarget[] = [];
-    let num_demons = 5; // 2 + level index?
-    for (let ii = 0; ii < num_demons; ++ii) {
-      targets.push(randomDemonTarget(targets));
-    }
-    this.targets = targets;
+    this.target = fixed_targets[level_idx] || randomDemonTarget([]);
+
+    this.evaluate();
   }
   commit(): void {
-    localStorageSetJSON('state', this.toJSON());
+    this.did_anything = true;
     this.evaluate();
+    localStorageSetJSON(`save.${this.level_idx}`, this.toJSON());
   }
   toJSON(): DataObject {
     return {
+      best_score: this.best_score,
       circles: this.circles,
       lines: this.lines,
       power: this.power,
@@ -679,9 +664,10 @@ class GameState {
         is_sym = true;
         break;
       }
-      if (!is_sym && c0 !== c1) {
+      if (!is_sym) {
         // horizontal symmetry
-        let test1 = [c0, mirror(a0), c1, mirror(a1)];
+        let test1: [number, number, number, number] = [c0, mirror(a0), c1, mirror(a1)];
+        canonicalLine(test1);
         if (all_lines[test1.join(',')]) {
           is_sym = true;
         }
@@ -741,6 +727,15 @@ class GameState {
       power: power_eval,
       symmetry: (symmax ? symmetry / symmax : 1) * 100,
     };
+
+    this.cur_score = evalMatch(this.evaluation, this.target);
+    if (this.cur_score > this.best_score) {
+      this.best_score = this.cur_score;
+      let score: Score = {
+        match: this.best_score,
+      };
+      score_system.setScore(this.level_idx, score);
+    }
   }
 }
 
@@ -751,8 +746,21 @@ let sprite_runes: Sprite;
 let sprite_bar_border: Sprite;
 let sprite_bar_fill: Sprite;
 let sprite_bar_marker: Sprite;
+let level_idx = 0;
+const MAX_LEVEL = 1000;
 function init(): void {
-  game_state = new GameState(1234);
+  score_system = scoreAlloc({
+    score_to_value: (score: Score): number => score.match,
+    value_to_score: (value: number): Score => ({ match: value }),
+    level_defs: MAX_LEVEL,
+    score_key: 'LD55',
+    ls_key: 'ld55',
+    asc: false,
+    rel: 8,
+    num_names: 3,
+    histogram: false,
+  });
+  game_state = new GameState(level_idx);
   sprite_runes = autoAtlas('runes', 'def');
   sprite_bar_border = autoAtlas('misc', 'bar_border');
   sprite_bar_fill = autoAtlas('misc', 'bar_fill');
@@ -853,22 +861,25 @@ function drawTriangle(x: number, y: number, z: number, rh: number, rv: number, u
   drawLine(x + rh, y0, x, y1, z, LINE_W, 1, color, LINE_CAP_ROUND);
 }
 
-function drawDemonPortrait(target: DemonTarget, x: number, y: number, z: number, w: number): void {
+function drawDemonPortrait(target: DemonTarget, x: number, y: number, w: number): void {
   let xmid = x + w / 2;
   let ymid = y + w / 2;
   let maxr = w * 0.35 * (0.9 + 0.1 * Math.random());
   drawTriangle(xmid, ymid, Z.LINES, maxr, maxr, false, target.color);
 }
 
-const EVALS: [EvalType, string][] = [
-  ['components', 'Components'],
-  ['cells', 'Cells'],
-  // ['ink', 'Ink'],
-  ['power', 'Power'],
-  ['symmetry', 'Symmetry'],
-];
-
 const RUNE_W = POWER_R * 1.5;
+
+function formatMatch(v: number): string {
+  if (v === 1000) {
+    return '100%';
+  }
+  v = round(v/10);
+  if (v === 100) {
+    v = 99;
+  }
+  return `${v}%`;
+}
 
 const EVAL_W = 200;
 const PAD = 8;
@@ -878,7 +889,6 @@ const DEMON_BORDER = 3;
 const DEMON_PORTRAIT_W = 138;
 const DEMON_PORTRAIT_X = 8;
 const DEMON_PORTRAIT_Y = 37;
-const DEMON_KNOW_BAR = 18;
 const EVAL_BAR_H = 26;
 const EVAL_BAR_W = 160;
 const EVAL_BAR_PAD = 9;
@@ -897,11 +907,11 @@ const style_eval_target = fontStyle(null, {
   glow_outer: 5,
 });
 function drawDemons(): void {
-  const { targets } = game_state;
+  const { target } = game_state;
   const x0 = game_width - PAD - DEMON_W;
-  let y = PAD * 2;
-  for (let ii = 0; ii < targets.length; ++ii) {
-    let target = targets[ii];
+  let y = (game_height - DEMON_H) / 2;
+  // for (let ii = 0; ii < targets.length; ++ii) {
+  if (true) {
     let z = Z.DEMON;
     // border
     drawRect(x0, y, x0 + DEMON_W, y + DEMON_H, z, palette[PALETTE_CRIM_BORDER]);
@@ -911,29 +921,6 @@ function drawDemons(): void {
       y + DEMON_H - DEMON_BORDER,
       z, palette[PALETTE_CRIM_CARD]);
     z++;
-    // knowledge bar bg
-    let know_bar = {
-      x: x0 + DEMON_BORDER,
-      y: y + DEMON_H - DEMON_KNOW_BAR - DEMON_BORDER,
-      z,
-      w: DEMON_W - DEMON_BORDER * 2,
-      h: DEMON_KNOW_BAR,
-      color: palette[PALETTE_CRIM_BG],
-    };
-    if (target.knowledge !== 1) {
-      drawRect2(know_bar);
-    }
-    z++;
-    // knowledge bar progress
-    if (target.knowledge) {
-      let offs = know_bar.w * (1 - target.knowledge);
-      know_bar.w -= offs;
-      know_bar.color = palette[PALETTE_CRIM_KNOWLEDGE_BAR];
-      drawRect2(know_bar);
-    }
-    z++;
-    // border between bar and bg
-    drawLine(x0+1, know_bar.y-0.5, x0 + DEMON_W -1, know_bar.y-0.5, z, 1, 1, palette[PALETTE_CRIM_BORDER]);
 
     markdownAuto({
       x: x0 + 10,
@@ -944,21 +931,6 @@ function drawDemons(): void {
       text: target.name,
     });
 
-    markdownAuto({
-      x: x0,
-      y: y + 10,
-      w: DEMON_W - 10,
-      z,
-      text_height: 20,
-      align: ALIGN.HRIGHT,
-      font_style: style_crim_text,
-      text: `${target.knowledge === 1 ?
-        `${target.value}` :
-        target.min_found ?
-          `≈${round((target.min_found + target.max_found)/2)}` :
-          '?'}[img=gp]`,
-    });
-
     drawRect(x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y,
       x0 + DEMON_PORTRAIT_X + DEMON_PORTRAIT_W,
       y + DEMON_PORTRAIT_Y + DEMON_PORTRAIT_W,
@@ -966,7 +938,7 @@ function drawDemons(): void {
       [0,0,0,1]);
 
     drawDemonPortrait(target,
-      x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y, z,
+      x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y,
       DEMON_PORTRAIT_W);
 
     let match = evalMatch(game_state.evaluation, target);
@@ -979,7 +951,7 @@ function drawDemons(): void {
         h: DEMON_PORTRAIT_W - 2,
         size: 16,
         align: ALIGN.HCENTER | ALIGN.VBOTTOM,
-        text: `${match[0] === match[1] ? match[0] : `${match[0]}-${match[1]}`}% match`,
+        text: `${formatMatch(match)} match`,
       });
     }
 
@@ -1004,22 +976,20 @@ function drawDemons(): void {
       let my_p = clamp((game_state.evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
       let am_close = false;
       let value_str = '?';
-      if (evalKnown(target, eval_type)) {
-        let value = target[eval_type];
-        let p = (value - range[0]) / (range[1] - range[0]);
-        if (p) {
-          drawHBox({
-            x: bar_x - 1,
-            y: yy - 1,
-            z: z - 0.5,
-            w: (EVAL_BAR_W) * p + 3,
-            h: EVAL_BAR_H + 2,
-            no_min_width: true,
-          }, sprite_bar_fill, palette[PALETTE_CRIM_BAR]);
-        }
-        value_str = `${value}`;
-        am_close = abs(p - my_p) < MATCH_PERFECT;
+      let value = target[eval_type];
+      let p = (value - range[0]) / (range[1] - range[0]);
+      if (p) {
+        drawHBox({
+          x: bar_x - 1,
+          y: yy - 1,
+          z: z - 0.5,
+          w: (EVAL_BAR_W) * p + 3,
+          h: EVAL_BAR_H + 2,
+          no_min_width: true,
+        }, sprite_bar_fill, palette[PALETTE_CRIM_BAR]);
       }
+      value_str = `${value}`;
+      am_close = abs(p - my_p) < MATCH_PERFECT;
       font.draw({
         style: style_eval_target,
         x: bar_x,
@@ -1056,6 +1026,138 @@ function drawDemons(): void {
 
     y += DEMON_H + PAD;
   }
+}
+
+const FIXED_LEVELS = 10;
+let did_win = false;
+
+const SCORE_COLUMNS = [
+  // widths are just proportional, scaled relative to `width` passed in
+  { name: '', width: 12, align: ALIGN.HFIT | ALIGN.HRIGHT | ALIGN.VCENTER },
+  { name: 'Name', width: 60, align: ALIGN.HFIT | ALIGN.VCENTER },
+  { name: 'Score', width: 20 },
+];
+const style_score = fontStyleColored(style_eval, 0xFFFFFFff);
+const style_me = fontStyleColored(style_eval, 0xffd541ff);
+const style_header = fontStyleColored(style_eval, 0x80FFFFff);
+function myScoreToRow(row: unknown[], score: Score): void {
+  row.push(formatMatch(score.match));
+}
+
+function drawLevel(): void {
+  let x = PAD;
+  let y = 80;
+  let w = MC_X0 - POWER_R - x - PAD;
+  let { target } = game_state;
+
+  let text_height = uiTextHeight();
+  font.draw({
+    style: style_eval,
+    x, y, w,
+    size: text_height,
+    align: ALIGN.HCENTER,
+    text: `Target #${level_idx+1}:`,
+  });
+
+  y += text_height + PAD;
+  font.draw({
+    style: style_eval,
+    x, y, w,
+    color: intColorFromVec4Color(target.color),
+    size: text_height * 1.5,
+    align: ALIGN.HCENTERFIT,
+    text: target.name,
+  });
+  y += text_height * 1.5 + PAD;
+  drawDemonPortrait(target, x + w/4, y, w/2);
+  y += w / 2 + PAD;
+  font.draw({
+    style: style_eval,
+    x, y, w,
+    size: text_height,
+    align: ALIGN.HCENTER,
+    text: `Your best: ${formatMatch(game_state.best_score)}`,
+  });
+  y += text_height + PAD * 2;
+
+  let show_high_scores = level_idx > 0 || game_state.best_score > 800;
+  if (!show_high_scores) {
+    font.draw({
+      style: style_eval,
+      x, y, w,
+      size: text_height,
+      align: ALIGN.HCENTER,
+      text: `Goal: ${formatMatch(800)}`,
+    });
+    y += text_height + PAD * 2;
+  }
+
+  let button_h = 64;
+  let button_w = (w - PAD) / 2;
+  if (level_idx !== 0) {
+    if (buttonText({
+      x,
+      y,
+      w: button_w,
+      h: button_h,
+      text: '←',
+      font_height: button_h,
+    })) {
+      level_idx--;
+      game_state = new GameState(level_idx);
+    }
+  }
+  if (level_idx >= FIXED_LEVELS || game_state.best_score > 800 || engine.DEBUG) {
+    if (buttonText({
+      x: x + w - button_w,
+      y,
+      w: button_w,
+      h: button_h,
+      text: '→',
+      font_height: button_h,
+      disabled: level_idx === MAX_LEVEL - 1,
+    })) {
+      level_idx++;
+      if (level_idx === FIXED_LEVELS && !did_win && !localStorageGetJSON(`save.${level_idx}`)) {
+        did_win = true;
+        modalDialog({
+          title: 'Well done!',
+          text: `You've adequately summoned ${FIXED_LEVELS} demons, you should be proud.  Thanks for playing!\n\n`+
+            'From here on out, there\'s an endless set of levels to play.',
+          buttons: {
+            Ok: null,
+          },
+        });
+      }
+      game_state = new GameState(level_idx);
+
+    }
+  }
+  y += button_h + PAD;
+
+  if (!show_high_scores) {
+    // no high scores
+    return;
+  }
+  scoresDraw<Score>({
+    score_system,
+    allow_rename: true,
+    x,
+    width: w,
+    y,
+    height: game_height - y,
+    z: Z.UI,
+    size: text_height,
+    line_height: text_height + 2,
+    level_index: level_idx,
+    columns: SCORE_COLUMNS,
+    scoreToRow: myScoreToRow,
+    style_score,
+    style_me,
+    style_header,
+    color_line: [1,1,1,1],
+    color_me_background: [0.2,0.2,0.2,1],
+  });
 }
 
 let mouse_pos = vec2();
@@ -1145,6 +1247,7 @@ function statePlay(dt: number): void {
   tex2_transform[3] = 1 + ((camera2d.y1Real() - (MC_YC + area_canvas_size / 2)) / area_canvas_size);
 
   drawDemons();
+  drawLevel();
 
   let do_hover = mouseOver({
     x: MC_X0 - PAD*4, y: MC_Y0 - PAD*4,
@@ -1522,7 +1625,7 @@ export function main(): void {
   // Perfect sizes for pixely modes
   scaleSizes(32 / 32);
   setFontHeight(32);
-  setButtonHeight(92);
+  setButtonHeight(48);
   if (engine.DEBUG) {
     engine.border_color[0] = 0.1;
     engine.border_color[2] = 0.1;
