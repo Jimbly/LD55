@@ -13,8 +13,6 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* undo/redo
-* show current match % somewhere!!!
 * split intro separate from help - both shorter; F11 hint in intro
 * Probably: need some way to be viewing sym and power at the same time
   * sym by colors (red/white)

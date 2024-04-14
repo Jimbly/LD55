@@ -1095,6 +1095,16 @@ function drawDemon2(): void {
     51,
     0, 0, 1, 1,
     unit_vec);
+
+  let match = evalMatch(evaluation, target);
+  font.draw({
+    style: style_eval,
+    x: xc, y: yc,
+    w: GRAPH_R, h: GRAPH_R,
+    size: font_height,
+    align: ALIGN.HRIGHT | ALIGN.VBOTTOM,
+    text: `${formatMatch(match)}`,
+  });
 }
 
 const EVAL_W = 200;
@@ -1244,6 +1254,46 @@ function drawDemons(): void {
   }
 }
 
+const BUTTONS_W = 120;
+const color_disabled = vec4(0.6, 0.4, 1, 0.5);
+function myButton(param: {
+  x: number;
+  y: number;
+  icon: string;
+  disabled?: () => boolean;
+  tooltip?: string;
+  hotkey?: () => boolean;
+}): boolean {
+  let ret = false;
+  let disabled = Boolean(param.disabled && param.disabled());
+  let button_param = {
+    x: param.x,
+    y: param.y,
+    z: disabled ? Z.LINES : Z.UI,
+    w: BUTTONS_W,
+    h: BUTTONS_W,
+    shrink: 1,
+  };
+  let sprite = autoAtlas('misc', disabled ? `${param.icon}` : `${param.icon}_hover`);
+  if (buttonImage({
+    ...button_param,
+    img: sprite,
+    color: disabled ? color_disabled : undefined,
+    no_bg: true,
+    disabled,
+    tooltip: param.tooltip,
+  }) || !disabled && param.hotkey && param.hotkey()) {
+    ret = true;
+  }
+  if (buttonWasFocused()) {
+    autoAtlas('misc', 'button_glow').draw({
+      ...button_param,
+      z: button_param.z - 1,
+    });
+  }
+  return ret;
+}
+
 const FIXED_LEVELS = 10;
 let did_win = false;
 
@@ -1277,6 +1327,9 @@ function drawLevel(): void {
     text: `Target #${level_idx+1}:`,
   });
 
+  let beat_level = game_state.best_score > 800;
+  let show_high_scores = level_idx > 0 || beat_level;
+
   y += text_height + PAD;
   font.draw({
     style: style_eval,
@@ -1287,53 +1340,28 @@ function drawLevel(): void {
     text: target.name,
   });
   y += text_height * 1.5 + PAD;
-  drawDemonPortrait(target, x + w/4, y, w/2);
-  y += w / 2 + PAD;
-  font.draw({
-    style: style_eval,
-    x, y, w,
-    size: text_height,
-    align: ALIGN.HCENTER,
-    text: `Your best: ${formatMatch(game_state.best_score)}`,
-  });
-  y += text_height + PAD * 2;
+  let demon_w_small = w/4;
+  let demon_w = beat_level ? demon_w_small : w / 2;
+  drawDemonPortrait(target, x + (w - demon_w)/2, y, demon_w);
 
-  let show_high_scores = level_idx > 0 || game_state.best_score > 800;
-  if (!show_high_scores) {
-    font.draw({
-      style: style_eval,
-      x, y, w,
-      size: text_height,
-      align: ALIGN.HCENTER,
-      text: `Goal: ${formatMatch(800)}`,
-    });
-    y += text_height + PAD * 2;
-  }
-
-  let button_h = 64;
-  let button_w = (w - PAD) / 2;
+  let button_w = BUTTONS_W;
+  let button_y = y + (demon_w_small - BUTTONS_W) / 2;
   if (level_idx !== 0) {
-    if (buttonText({
+    if (myButton({
       x,
-      y,
-      w: button_w,
-      h: button_h,
-      text: '←',
-      font_height: button_h,
+      y: button_y,
+      icon: 'left',
     })) {
       level_idx--;
       getGameState();
     }
   }
-  if (level_idx >= FIXED_LEVELS || game_state.best_score > 800 || engine.DEBUG) {
-    if (buttonText({
+  if (level_idx >= FIXED_LEVELS || beat_level) {
+    if (myButton({
+      icon: 'right',
       x: x + w - button_w,
-      y,
-      w: button_w,
-      h: button_h,
-      text: '→',
-      font_height: button_h,
-      disabled: level_idx === MAX_LEVEL - 1,
+      y: button_y,
+      disabled: () => level_idx === MAX_LEVEL - 1,
     })) {
       level_idx++;
       if (level_idx === FIXED_LEVELS && !did_win && !localStorageGetJSON(`save.${level_idx}`)) {
@@ -1350,7 +1378,36 @@ function drawLevel(): void {
       getGameState();
     }
   }
-  y += button_h + PAD;
+
+  y += demon_w + PAD;
+
+  font.draw({
+    style: style_eval,
+    x, y, w,
+    size: text_height,
+    align: ALIGN.HCENTER,
+    text: `Current Match: ${formatMatch(game_state.cur_score)}`,
+  });
+  y += text_height + PAD * 2;
+  font.draw({
+    style: style_eval,
+    x, y, w,
+    size: text_height,
+    align: ALIGN.HCENTER,
+    text: `Your best: ${formatMatch(game_state.best_score)}`,
+  });
+  y += text_height + PAD * 2;
+
+  if (!show_high_scores || !beat_level) {
+    font.draw({
+      style: style_eval,
+      x, y, w,
+      size: text_height,
+      align: ALIGN.HCENTER,
+      text: `Goal: ${formatMatch(800)}`,
+    });
+    y += text_height + PAD * 2;
+  }
 
   if (!show_high_scores) {
     // no high scores
@@ -1453,13 +1510,10 @@ let highlight_symmetry_toggle = false;
 const HELP_W = 120;
 const HELP_X = game_width - 24 - HELP_W;
 const HELP_Y = 24;
-const color_disabled = vec4(0.6, 0.4, 1, 0.5);
-const BUTTONS_W = 120;
 const BUTTONS_X1 = game_width - 24;
 const BUTTONS_Y0 = game_height - 24 - BUTTONS_W;
 const BUTTONS = [{
-  sprite: autoAtlas('misc', 'undo_hover'),
-  sprite2: autoAtlas('misc', 'undo'),
+  icon: 'undo',
   tooltip: 'Undo [Ctrl-Z]',
   cb: function () {
     game_state.undo();
@@ -1471,8 +1525,7 @@ const BUTTONS = [{
     return keyDown(KEYS.CTRL) && !keyDown(KEYS.SHIFT) && keyDownEdge(KEYS.Z);
   },
 },{
-  sprite: autoAtlas('misc', 'redo_hover'),
-  sprite2: autoAtlas('misc', 'redo'),
+  icon: 'redo',
   tooltip: 'Redo [Ctrl-Y]',
   cb: function () {
     game_state.redo();
@@ -1487,6 +1540,7 @@ const BUTTONS = [{
     );
   },
 }];
+
 function statePlay(dt: number): void {
   overlay_active = false;
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
@@ -1499,6 +1553,7 @@ function statePlay(dt: number): void {
     y: HELP_Y,
     w: HELP_W,
     h: HELP_W,
+    pad_focusable: false,
   });
   let show_help = spot_ret.focused || show_initial_help || keyDown(KEYS.F1);
   autoAtlas('misc', show_help ? 'help' : 'help_hover').draw({
@@ -1526,30 +1581,12 @@ function statePlay(dt: number): void {
   for (let ii = BUTTONS.length - 1; ii >= 0; --ii) {
     buttonx -= BUTTONS_W;
     let button = BUTTONS[ii];
-    let disabled = button.disabled();
-    let button_param = {
+    if (myButton({
+      ...button,
       x: buttonx,
       y: BUTTONS_Y0,
-      z: disabled ? Z.LINES : Z.UI,
-      w: BUTTONS_W,
-      h: BUTTONS_W,
-      shrink: 1,
-    };
-    if (buttonImage({
-      ...button_param,
-      img: disabled ? button.sprite2 : button.sprite,
-      color: disabled ? color_disabled : undefined,
-      no_bg: true,
-      disabled,
-      tooltip: button.tooltip,
-    }) || !disabled && button.hotkey()) {
+    })) {
       button.cb();
-    }
-    if (buttonWasFocused()) {
-      autoAtlas('misc', 'button_glow').draw({
-        ...button_param,
-        z: button_param.z - 1,
-      });
     }
     buttonx -= PAD;
   }
