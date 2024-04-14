@@ -122,7 +122,7 @@ const palette = [
   vec4(1, 1, 1, 1),
   vec4(0, 1, 0.2, 1),
   vec4(0, 0, 0, 1),
-  vec4(1, 0.25, 0.25, 1),
+  vec4(1, 0.25, 0.5, 1),
   vec4(0, 0, 1, 1),
   vec4(196/255, 17/255, 255/255, 1),
   v3iScale(vec4(196/255, 17/255, 255/255, 1), 0.35) as Vec4,
@@ -132,18 +132,22 @@ const palette = [
   vec4ColorFromIntColor(vec4(), 0xba5044ff),
   vec4ColorFromIntColor(vec4(), 0xd7c4b3ff),
   vec4ColorFromIntColor(vec4(), 0xddbfa2ff),
+  vec4(0.25, 1.0, 0.5, 1),
+  vec4(0.5, 0, 0, 1),
+  vec4(0.5, 1, 1, 1),
 ];
 const font_palette = palette.map(intColorFromVec4Color);
-const PALETTE_CIRCLE = 0;
-const PALETTE_LINE = 0;
-const PALETTE_POWER = 1;
+const PALETTE_CIRCLE = 15;
+// const PALETTE_LINE = 0;
+// const PALETTE_POWER = 1;
 const PALETTE_BG = 2;
 const PALETTE_HOVER = 4;
-const PALETTE_HOVER_DELETE = 3;
+const PALETTE_HOVER_DELETE = 14;
 const PALETTE_GLOW = 5;
-const PALETTE_GLOW_SUBDUED = 6;
-const PALETTE_SYMERROR = 3;
-const PALETTE_SYMMATCH = 1;
+// const PALETTE_GLOW_SUBDUED = 6;
+const PALETTE_SYMERROR_HIGHLIGHT = 3;
+const PALETTE_SYMERROR_NORMAL = PALETTE_CIRCLE;
+const PALETTE_SYMMATCH = 13;
 const PALETTE_CRIM_BG = 7;
 const PALETTE_CRIM_TEXT = 7;
 const PALETTE_CRIM_BAR = 8;
@@ -197,7 +201,9 @@ const CIRCLE_STEPS = 12;
 const ANGLE_STEPS = 48;
 const CIRCLE_MIN = 4;
 
-function canonicalLine(line: [number, number, number, number]): void {
+type JSVec4 = [number, number, number, number];
+
+function canonicalLine(line: JSVec4): void {
   if (line[1] < 0) {
     line[1] += ANGLE_STEPS;
   }
@@ -342,7 +348,7 @@ for (let ii = 0; ii < 10; ++ii) {
 
 class GameState {
   circles: number[] = [8];
-  lines: [number, number, number, number][] = [[0, 5, 0, 20]];
+  lines: JSVec4[] = [[0, 5, 0, 20]];
   power: [number, number][] = [[0, 15]];
   placing: null | [number, number] = null;
   symmap!: {
@@ -398,7 +404,7 @@ class GameState {
   }
   fromJSON(saved: DataObject): void {
     this.circles = saved.circles as number[];
-    this.lines = saved.lines as [number, number, number, number][];
+    this.lines = saved.lines as JSVec4[];
     this.power = saved.power as [number, number][];
     this.best_score = saved.best_score as number || 0;
     // fixup bad debug data
@@ -733,7 +739,7 @@ class GameState {
       }
       if (!is_sym) {
         // horizontal symmetry
-        let test1: [number, number, number, number] = [c0, mirror(a0), c1, mirror(a1)];
+        let test1: JSVec4 = [c0, mirror(a0), c1, mirror(a1)];
         canonicalLine(test1);
         if (all_lines[test1.join(',')]) {
           is_sym = true;
@@ -930,7 +936,7 @@ function doColorEffectEarly(highlight_symmetry: boolean): void {
 }
 function doColorEffectLate(highlight_symmetry: boolean): void {
   let params = {
-    color: palette[highlight_symmetry ? PALETTE_GLOW_SUBDUED : PALETTE_GLOW],
+    color: palette[PALETTE_GLOW],
     tex2_transform,
   };
   let source = [
@@ -940,7 +946,7 @@ function doColorEffectLate(highlight_symmetry: boolean): void {
   ];
   blendModeSet(BLEND_ADDITIVE);
   effects.applyCopy({
-    shader: highlight_symmetry ? 'glow_merge_no_power' : 'glow_merge',
+    shader: highlight_symmetry || true ? 'glow_merge_no_power' : 'glow_merge',
     source,
     params,
     no_framebuffer: true,
@@ -1769,6 +1775,8 @@ function statePlay(dt: number): void {
 
   const CIRCLE_INTERACT_DIST = MC_R / CIRCLE_STEPS / 2;
 
+  let symerr_pal = highlight_symmetry ? PALETTE_SYMERROR_HIGHLIGHT : PALETTE_SYMERROR_NORMAL;
+
   let center_cursor_dist = v2dist(mouse_pos, [MC_XC, MC_YC]);
   let cursor_angle = round(atan2(mouse_pos[0] - MC_XC, mouse_pos[1] - MC_YC) * ANGLE_STEPS / (2 * PI));
   if (cursor_angle < 0) {
@@ -1822,17 +1830,17 @@ function statePlay(dt: number): void {
     let line = lines[ii];
     let [x0, y0] = circAngleToXY(line[0], line[1]);
     let [x1, y1] = circAngleToXY(line[2], line[3]);
-    let pal = highlight_symmetry ? game_state.symmap.lines[ii] ? PALETTE_SYMMATCH : PALETTE_SYMERROR : PALETTE_LINE;
+    let pal = game_state.symmap.lines[ii] ? PALETTE_SYMMATCH : symerr_pal;
     drawLine(x0, y0, x1, y1, Z.LINES, LINE_W, 1, palette[pal]);
   }
   for (let ii = 0; ii < power.length; ++ii) {
     let pow = power[ii];
     let [x, y] = circAngleToXY(pow[0], pow[1]);
     drawCircle(x, y, Z.POWER, POWER_R, 1, palette[PALETTE_BG]);
-    let symerror = highlight_symmetry && !game_state.symmap.power[ii];
-    let pal = symerror ? PALETTE_SYMERROR : PALETTE_POWER;
+    let symerror = !game_state.symmap.power[ii];
+    let pal = symerror ? symerr_pal : PALETTE_SYMMATCH;
     drawCircleAA(x, y, Z.POWER + (symerror ? 0.15 : 0.1), POWER_R, LINE_W, 1, palette[pal]);
-    if (!highlight_cells) {
+    if (!highlight_cells && !highlight_power) {
       sprite_runes.draw({
         x: x - RUNE_W/2,
         y: y - RUNE_W/2,
@@ -1944,6 +1952,9 @@ function statePlay(dt: number): void {
             }
           },
         ];
+        if (would_remove) {
+          right_click = left_click;
+        }
       }
     }
   }
@@ -1956,7 +1967,7 @@ function statePlay(dt: number): void {
     }
     if (cursor_circle_dist < CIRCLE_INTERACT_DIST) {
       // do rollover
-      let line: [number, number, number, number] = [0,0,0,0];
+      let line: JSVec4 = [0,0,0,0];
       let valid = true;
       if (placing) {
         line = [placing[0], placing[1], cursor_circle, cursor_angle];
@@ -2011,6 +2022,25 @@ function statePlay(dt: number): void {
             'Draw/Erase line',
             nop,
           ];
+          let line_to_remove: number | null = null;
+          for (let ii = 0; ii < lines.length; ++ii) {
+            if (lines[ii][0] === cursor_circle && lines[ii][1] === cursor_angle ||
+              lines[ii][2] === cursor_circle && lines[ii][3] === cursor_angle
+            ) {
+              line_to_remove = ii;
+            }
+          }
+          if (line_to_remove !== null) {
+            let [sx, sy] = circAngleToXY(lines[line_to_remove][0], lines[line_to_remove][1]);
+            let [tx2, ty2] = circAngleToXY(lines[line_to_remove][2], lines[line_to_remove][3]);
+            drawLine(sx, sy, tx2, ty2, Z.HOVER, LINE_W_DELETE, 0.5, palette[PALETTE_HOVER_DELETE]);
+            right_click = [
+              'Erase line',
+              function () {
+                lines.splice(line_to_remove!, 1);
+              },
+            ];
+          }
         }
       } else {
         assert(placing);
@@ -2024,6 +2054,9 @@ function statePlay(dt: number): void {
         ];
       }
     } else if (placing) {
+      let [sx, sy] = circAngleToXY(placing[0], placing[1]);
+      drawLine(sx, sy, mouse_pos[0], mouse_pos[1], Z.HOVER, LINE_W_DELETE, 0.5,
+        palette[PALETTE_HOVER]);
       drag_stop = [
         'Draw line',
         nop,

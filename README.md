@@ -14,8 +14,8 @@ Start with: `npm start` (after running `npm i` once)
 
 TODO:
 * Probably: need some way to be viewing sym and power at the same time
-  * sym by colors (red/white)
-  * power by pulses (green?) running along it, with runes only showing up during pulse
+  * sym by colors (green/cyan)
+  * power by pulses (pink?) running along it, with runes only showing up during pulse
   * maybe visibility toggles for sym/power?
 * better demon heads
 * SFX
