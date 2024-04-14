@@ -33,13 +33,18 @@ import { markdownAuto } from 'glov/client/markdown';
 import { markdownImageRegister } from 'glov/client/markdown_renderables';
 import { netInit } from 'glov/client/net';
 import {
+  BLEND_ADDITIVE,
   Sprite,
   Texture,
+  blendModeReset,
+  blendModeSet,
   spriteCreate,
+  spriteQueueFn,
 } from 'glov/client/sprites';
 import {
   TEXTURE_FORMAT,
   textureLoad,
+  textureWhite,
 } from 'glov/client/textures';
 import {
   LINE_CAP_ROUND,
@@ -80,7 +85,8 @@ Z.LINES = 9;
 Z.POWER = 11;
 Z.POSTPROCESS = 15;
 Z.HOVER = 20;
-Z.DEMON = 100;
+Z.DEMON = 50;
+Z.POSTPROCESS_LATE = Z.DEMON + 4.5;
 Z.UI = 100;
 Z.RUNES = 100; // Z.POWER;
 
@@ -186,6 +192,7 @@ type DemonTarget = {
   value: number;
   knowledge_points: number[];
   knowledge_ordering: EvalType[];
+  seed: number;
 
   // run-time
   min_found: number;
@@ -220,6 +227,7 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
   shuffleArray(rand, knowledge_ordering);
   rand.range(1); // 'ink'
   let value = 100 + rand.range(901);
+  let seed = rand.range(10000);
 
   let name;
   while (true) {
@@ -248,6 +256,7 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
     value,
     knowledge_points,
     knowledge_ordering,
+    seed,
 
     min_found: 0,
     max_found: 0,
@@ -800,27 +809,54 @@ function doBlurEffect(factor: number): void {
 }
 
 let tex2_transform = vec4(1, 1, 0, 0);
-function doColorEffect(highlight_symmetry: boolean): void {
+let this_frame_glow_buf: Texture;
+function doColorEffectEarly(highlight_symmetry: boolean): void {
+  this_frame_glow_buf = framebufferEnd({ filter_linear: false, need_depth: false });
+  effects.applyCopy({
+    source: textureWhite(),
+    shader: 'clear',
+  });
+}
+function doColorEffectLate(highlight_symmetry: boolean): void {
   let params = {
     color: palette[highlight_symmetry ? PALETTE_GLOW_SUBDUED : PALETTE_GLOW],
     tex2_transform,
   };
   let source = [
     this_frame_source,
-    framebufferEnd({ filter_linear: false, need_depth: false }),
+    this_frame_glow_buf,
     game_state.getPowerSprite()!.texs[0],
   ];
+  blendModeSet(BLEND_ADDITIVE);
   effects.applyCopy({
     shader: highlight_symmetry ? 'glow_merge_no_power' : 'glow_merge',
     source,
     params,
+    no_framebuffer: true,
   });
+  blendModeReset(false);
 }
 
 function queuePostprocess(highlight_symmetry: boolean): void {
   let blur_factor = 1;
   effectsQueue(Z.POSTPROCESS, doBlurEffect.bind(null, blur_factor));
-  effectsQueue(Z.POSTPROCESS + 1, doColorEffect.bind(null, highlight_symmetry));
+  effectsQueue(Z.POSTPROCESS + 1, doColorEffectEarly.bind(null, highlight_symmetry));
+  spriteQueueFn(Z.POSTPROCESS_LATE, doColorEffectLate.bind(null, highlight_symmetry));
+}
+
+function drawTriangle(x: number, y: number, z: number, rh: number, rv: number, up: boolean, color: Vec4): void {
+  let y0 = y + (up ? rv : -rv);
+  let y1 = y + (up ? -rv : rv);
+  drawLine(x - rh, y0, x + rh, y0, z, LINE_W, 1, color, LINE_CAP_ROUND);
+  drawLine(x - rh, y0, x, y1, z, LINE_W, 1, color, LINE_CAP_ROUND);
+  drawLine(x + rh, y0, x, y1, z, LINE_W, 1, color, LINE_CAP_ROUND);
+}
+
+function drawDemonPortrait(target: DemonTarget, x: number, y: number, z: number, w: number): void {
+  let xmid = x + w / 2;
+  let ymid = y + w / 2;
+  let maxr = w * 0.35 * (0.9 + 0.1 * Math.random());
+  drawTriangle(xmid, ymid, Z.LINES, maxr, maxr, false, target.color);
 }
 
 const EVALS: [EvalType, string][] = [
@@ -926,7 +962,12 @@ function drawDemons(): void {
       x0 + DEMON_PORTRAIT_X + DEMON_PORTRAIT_W,
       y + DEMON_PORTRAIT_Y + DEMON_PORTRAIT_W,
       z - 0.5,
-      [0,0,0,1]); // TODO: needs to be actual hole
+      [0,0,0,1]);
+
+    drawDemonPortrait(target,
+      x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y, z,
+      DEMON_PORTRAIT_W);
+
     let match = evalMatch(game_state.evaluation, target);
     if (match) {
       font.draw({
@@ -1457,6 +1498,9 @@ export function main(): void {
   });
   effects.registerShader('glow_merge_no_power', {
     fp: 'shaders/effects_glow_merge_no_power.fp',
+  });
+  effects.registerShader('clear', {
+    fp: 'shaders/effects_clear.fp',
   });
 
   if (!engine.startup({
