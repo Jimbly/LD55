@@ -2213,6 +2213,17 @@ export function main(): void {
   ] as const).forEach((key) => {
     ui_sprites[key] = { atlas: 'default', name: 'button' };
   });
+  if (engine.defines.COMPO) {
+    ([
+      'scrollbar_bottom',
+      'scrollbar_handle',
+      'scrollbar_handle_grabber',
+      'scrollbar_top',
+      'scrollbar_trough'
+    ] as const).forEach((key) => {
+      ui_sprites[key] = { atlas: 'default', name: `${key}_compo` };
+    });
+  }
 
   effects.registerShader('glow_merge', {
     fp: 'shaders/effects_glow_merge.fp',
