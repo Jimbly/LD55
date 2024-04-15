@@ -19,6 +19,7 @@ import {
   vec4ColorFromIntColor,
 } from 'glov/client/font';
 import { framebufferEnd } from 'glov/client/framebuffer';
+import { fscreenEnter } from 'glov/client/fscreen';
 import {
   KEYS,
   inputClick,
@@ -191,9 +192,9 @@ const style_help_term = fontStyle(style_eval, {
   color: 0x80FFFFff,
 });
 
-const MC_X0 = 560;
-const MC_Y0 = 120;
-const MC_W = 800;
+const MC_W = 840;
+const MC_X0 = (game_width - MC_W) / 2;
+const MC_Y0 = 60;
 const MC_R = MC_W / 2;
 const MC_XC = MC_X0 + MC_W/2;
 const MC_YC = MC_Y0 + MC_W/2;
@@ -1536,6 +1537,11 @@ function drawLevel(): void {
   });
 }
 
+function leaveHelpAndEnterFullscreen(): void {
+  show_initial_help = false;
+  fscreenEnter();
+}
+
 const OVERLAY_X = 40;
 const OVERLAY_W = game_width - OVERLAY_X * 2;
 const OVERLAY_Y = 10;
@@ -1611,6 +1617,7 @@ From here on out, there's an endless set of levels to play.`;
       y: game_height - uiButtonHeight() - PAD,
       z: Z.OVERLAY + 2,
       text: type === 'intro' ? 'Let\'s go!' : 'I rock!',
+      in_event_cb: show_initial_help && inputTouchMode() ? leaveHelpAndEnterFullscreen : undefined,
     })) {
       show_initial_help = false;
       show_game_complete = false;
