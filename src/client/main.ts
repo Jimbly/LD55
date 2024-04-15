@@ -8,7 +8,10 @@ import assert from 'assert';
 import { autoAtlas } from 'glov/client/autoatlas';
 import * as camera2d from 'glov/client/camera2d';
 import * as effects from 'glov/client/effects';
-import { effectsQueue } from 'glov/client/effects';
+import {
+  effectsLastFramebuffer,
+  effectsQueue,
+} from 'glov/client/effects';
 import * as engine from 'glov/client/engine';
 import {
   ALIGN,
@@ -912,7 +915,7 @@ function doBlurEffect(factor: number): void {
     framebuffer_source: null as unknown,
   };
   effects.applyGaussianBlur(params);
-  this_frame_source = params.framebuffer_source;
+  this_frame_source = effectsLastFramebuffer();
 }
 
 let tex2_transform = vec4(1, 1, 0, 0);
