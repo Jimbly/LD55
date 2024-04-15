@@ -13,13 +13,12 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* zen mode toggle
-* Change level 10 notification to use overlay screen
+* new button graphic
 * Copy circle from previous if no save?  Start completely fresh beyond the first one?  Something more interesting as default?
 * hover/etc is pretty crappy on mobile (post-jam fix?)
+* Noisy BG grain texture
 
 Polish / Bugs:
 * Remove short line when drawing a larger line directly over it
 * Remove short line when a power node completely consumes it
-* Noisy BG grain texture
 * portrait mode display

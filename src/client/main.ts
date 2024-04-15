@@ -69,7 +69,6 @@ import {
   drawHBox,
   drawLine,
   drawRect,
-  modalDialog,
   panel,
   playUISound,
   scaleSizes,
@@ -135,10 +134,11 @@ const palette = [
   vec4ColorFromIntColor(vec4(), 0xba5044ff),
   vec4ColorFromIntColor(vec4(), 0xd7c4b3ff),
   vec4ColorFromIntColor(vec4(), 0xddbfa2ff),
-  vec4(0.25, 1.0, 0.5, 1),
+  vec4(0.25, 1.0, 0.5, 1), // 13
   vec4(0.5, 0, 0, 1),
   vec4(0.5, 1, 1, 1),
   vec4(1, 0, 0, 1),
+  vec4(1, 0.6, 0.5, 1),
 ];
 const font_palette = palette.map(intColorFromVec4Color);
 const PALETTE_CIRCLE = 15;
@@ -150,7 +150,7 @@ const PALETTE_GLOW = 5;
 // const PALETTE_GLOW_SUBDUED = 6;
 const PALETTE_POWER = PALETTE_GLOW;
 const PALETTE_SYMERROR_HIGHLIGHT = 3;
-const PALETTE_SYMERROR_NORMAL = PALETTE_CIRCLE;
+const PALETTE_SYMERROR_NORMAL = 17;
 const PALETTE_SYMMATCH = 13;
 const PALETTE_CRIM_BG = 7;
 const PALETTE_CRIM_TEXT = 7;
@@ -345,11 +345,21 @@ function evalMatch(evaluation: Evaluation, demon: DemonTarget): number {
   return ret;
 }
 
-rand.reseed(1234);
+rand.reseed(1235);
 let fixed_targets: DemonTarget[] = [];
 for (let ii = 0; ii < 10; ++ii) {
   fixed_targets.push(randomDemonTarget(fixed_targets));
 }
+fixed_targets[0].components = 14;
+fixed_targets[0].cells = 25;
+fixed_targets[0].symmetry = 0;
+fixed_targets[0].power = 25;
+fixed_targets[1].components = 14;
+fixed_targets[1].cells = 15;
+fixed_targets[1].symmetry = 75;
+fixed_targets[1].power = 85;
+fixed_targets[2].power = 95;
+fixed_targets[3].components = 18;
 
 class GameState {
   circles: number[] = [8];
@@ -841,8 +851,8 @@ function init(): void {
     score_to_value: (score: Score): number => score.match,
     value_to_score: (value: number): Score => ({ match: value }),
     level_defs: MAX_LEVEL,
-    score_key: 'LD55',
-    ls_key: 'ld55',
+    score_key: 'LD55a',
+    ls_key: 'ld55a',
     asc: false,
     rel: 8,
     num_names: 3,
@@ -1086,6 +1096,9 @@ function drawDemon2(): void {
     ...target_hotspot,
     sound_rollover: 'rollover',
   }).focused;
+  if (engine.DEBUG) {
+    show_mine = false;
+  }
   if (!show_mine) {
     drawElipse(target_hotspot.x, target_hotspot.y, target_hotspot.x + target_hotspot.w, target_hotspot.y + target_hotspot.h,
       Z.UI - 1, 0.1, palette[PALETTE_TARGET_GLOW]);
@@ -1390,6 +1403,8 @@ function myScoreToRow(row: unknown[], score: Score): void {
 }
 
 let overlay_active = false;
+let show_initial_help = !engine.DEBUG;
+let show_game_complete = false;
 
 function drawLevel(): void {
   let x = PAD;
@@ -1447,14 +1462,7 @@ function drawLevel(): void {
       level_idx++;
       if (level_idx === FIXED_LEVELS && !did_win && !localStorageGetJSON(`save.${level_idx}`)) {
         did_win = true;
-        modalDialog({
-          title: 'Well done!',
-          text: `You've adequately summoned ${FIXED_LEVELS} demons, you should be proud.  Thanks for playing!\n\n`+
-            'From here on out, there\'s an endless set of levels to play.',
-          buttons: {
-            Ok: null,
-          },
-        });
+        show_game_complete = true;
       }
       getGameState();
     }
@@ -1515,14 +1523,12 @@ function drawLevel(): void {
   });
 }
 
-let show_initial_help = !engine.DEBUG;
-
 const OVERLAY_X = 40;
 const OVERLAY_W = game_width - OVERLAY_X * 2;
 const OVERLAY_Y = 10;
 const OVERLAY_H = game_height - OVERLAY_Y * 2;
 const OVERLAY_HPAD = 200;
-function doOverlay(type: 'help' | 'intro'): void {
+function doOverlay(type: 'help' | 'intro' | 'win'): void {
   overlay_active = true;
 
   let msg: string;
@@ -1562,6 +1568,14 @@ Each demon has its own tastes, and will evaluate your magic circle based on its 
 
 A detailed analysis of your current magic circle is shown on the right, and additional details about [c=0]symmetry[/c], [c=0]power[/c] and [c=0]components[/c] are shown if you select the category.
 `;
+  } else if (type === 'win') {
+    msg = `**Well done!**
+
+[img=spacer]
+
+You've adequately summoned **${FIXED_LEVELS}** demons, you should be proud.  Thanks for playing!
+
+From here on out, there's an endless set of levels to play.`;
   } else {
     assert(false);
   }
@@ -1578,14 +1592,15 @@ A detailed analysis of your current magic circle is shown on the right, and addi
     text: msg
   });
 
-  if (type === 'intro') {
+  if (type === 'intro' || type === 'win') {
     if (buttonText({
       x: (game_width - uiButtonWidth()) / 2,
       y: game_height - uiButtonHeight() - PAD,
       z: Z.OVERLAY + 2,
-      text: 'Let\'s go!',
+      text: type === 'intro' ? 'Let\'s go!' : 'I rock!',
     })) {
       show_initial_help = false;
+      show_game_complete = false;
     }
   }
 
@@ -1603,7 +1618,7 @@ A detailed analysis of your current magic circle is shown on the right, and addi
     [0,0,0,0.8]);
 }
 
-let want_music = true;
+let want_music = !engine.DEBUG;
 let mouse_pos = vec2();
 let was_drag = false;
 let highlight_toggle: Partial<Record<EvalType, boolean>> = {};
@@ -1717,6 +1732,8 @@ function statePlay(dt: number): void {
     doOverlay('intro');
   } else if (show_help) {
     doOverlay('help');
+  } else if (show_game_complete) {
+    doOverlay('win');
   }
 
   let buttonx = BUTTONS_X1;
