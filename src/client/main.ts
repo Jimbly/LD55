@@ -57,7 +57,6 @@ import {
 import {
   TEXTURE_FORMAT,
   textureLoad,
-  textureWhite,
 } from 'glov/client/textures';
 import {
   LINE_CAP_ROUND,
@@ -837,6 +836,7 @@ let sprite_bar_marker: Sprite;
 let sprite_graph: Sprite;
 let sprite_demonrect: Sprite;
 let sprite_radarrect: Sprite;
+let sprite_gradient: Sprite;
 let level_idx = 0;
 const MAX_LEVEL = 1000;
 let game_state_cache: GameState[] = [];
@@ -877,6 +877,13 @@ function init(): void {
     name: 'radarrect',
     filter_min: gl.LINEAR_MIPMAP_LINEAR,
     filter_mag: gl.LINEAR,
+  });
+  sprite_gradient = spriteCreate({
+    name: 'gradient',
+    filter_min: gl.LINEAR,
+    filter_mag: gl.LINEAR,
+    wrap_s: gl.REPEAT,
+    wrap_t: gl.CLAMP_TO_EDGE,
   });
   markdownImageRegister('gp', {
     sprite: autoAtlas('misc', 'gp'),
@@ -945,8 +952,11 @@ let this_frame_glow_buf: Texture;
 function doColorEffectEarly(highlight_symmetry: boolean): void {
   this_frame_glow_buf = framebufferEnd({ filter_linear: false, need_depth: false });
   effects.applyCopy({
-    source: textureWhite(),
+    source: sprite_gradient.texs[0],
     shader: 'clear',
+    params: {
+      color: game_state.target.color,
+    },
   });
 }
 let pulse_color = palette[PALETTE_POWER];
@@ -1686,6 +1696,86 @@ function tickMusic(): void {
   }
 }
 
+function removeOverlappingLines(line: JSVec4): void {
+  let { lines, circles } = game_state;
+  let [c0, a0, c1, a1] = line;
+  c0 = circles[c0];
+  c1 = circles[c1];
+  if (a0 > ANGLE_STEPS / 2) {
+    c0 = -c0;
+    a0 -= ANGLE_STEPS / 2;
+  }
+  if (a1 > ANGLE_STEPS / 2) {
+    c1 = -c1;
+    a1 -= ANGLE_STEPS / 2;
+  }
+  if (c0 > c1) {
+    let t = c0;
+    c0 = c1;
+    c1 = t;
+    t = a0;
+    a0 = a1;
+    a1 = t;
+  }
+  if (a0 !== a1) {
+    return;
+  }
+  for (let ii = lines.length - 1; ii >= 0; --ii) {
+    let other = lines[ii];
+    if (other === line) {
+      continue;
+    }
+    let [oc0, oa0, oc1, oa1] = other;
+    oc0 = circles[oc0];
+    oc1 = circles[oc1];
+    if (oa0 > ANGLE_STEPS / 2) {
+      oc0 = -oc0;
+      oa0 -= ANGLE_STEPS / 2;
+    }
+    if (oa1 > ANGLE_STEPS / 2) {
+      oc1 = -oc1;
+      oa1 -= ANGLE_STEPS / 2;
+    }
+    if (oc0 > oc1) {
+      let t = oc0;
+      oc0 = oc1;
+      oc1 = t;
+      t = oa0;
+      oa0 = oa1;
+      oa1 = t;
+    }
+    if (oa0 !== oa1) {
+      continue;
+    }
+    if (a0 === oa0 && a1 === oa1) {
+      if (oc0 >= c0 && oc1 <= c1) {
+        lines.splice(ii, 1);
+      }
+    }
+  }
+}
+
+function removeOverlappingLinesFromPower(pos: [number, number]): void {
+  let { lines, circles } = game_state;
+  let [c, a] = pos;
+  c = circles[c];
+  for (let ii = lines.length - 1; ii >= 0; --ii) {
+    let line = lines[ii];
+    let [c0, a0, c1, a1] = line;
+    c0 = circles[c0];
+    c1 = circles[c1];
+    let d = abs(c - c0) + abs(a - a0);
+    if (d > 1) {
+      continue;
+    }
+    d = abs(c - c1) + abs(a - a1);
+    if (d > 1) {
+      continue;
+    }
+    lines.splice(ii, 1);
+  }
+}
+
 function statePlay(dt: number): void {
   overlay_active = false;
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
@@ -2106,6 +2196,7 @@ function statePlay(dt: number): void {
             }
             if (!removed) {
               power.push(pos);
+              removeOverlappingLinesFromPower(pos);
             }
           },
         ];
@@ -2174,6 +2265,8 @@ function statePlay(dt: number): void {
               }
               if (!removed) {
                 lines.push(line);
+                // also remove any lines this directly overlaps
+                removeOverlappingLines(line);
               }
               placing = game_state.placing = null;
             },
