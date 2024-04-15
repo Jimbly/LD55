@@ -13,7 +13,6 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* new button graphic
 * Copy circle from previous if no save?  Start completely fresh beyond the first one?  Something more interesting as default?
 * hover/etc is pretty crappy on mobile (post-jam fix?)
 

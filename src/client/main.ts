@@ -73,9 +73,11 @@ import {
   scaleSizes,
   setButtonHeight,
   setFontHeight,
+  setFontStyles,
   uiBindSounds,
   uiButtonHeight,
   uiButtonWidth,
+  uiSetPanelColor,
   uiTextHeight,
 } from 'glov/client/ui';
 import { randCreate } from 'glov/common/rand_alea';
@@ -2459,6 +2461,9 @@ export function main(): void {
     remove: ['remove', 'remove2', 'remove3', 'remove4'],
     drag_start: 'drag_start',
   });
+
+  setFontStyles(style_eval);
+  uiSetPanelColor([0, 0, 0, 0.9]);
 
   scaleSizes(32 / 32);
   setFontHeight(32);
