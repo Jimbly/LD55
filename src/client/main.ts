@@ -642,8 +642,7 @@ class GameState {
           filter_mag: gl.NEAREST,
         });
       }
-      // @ts-expect-error TODO!
-      this.area_tex.updateData(w, w, area_buf);
+      this.area_tex!.updateData(w, w, area_buf);
 
       if (!this.area_sprite) {
         this.area_sprite = spriteCreate({
@@ -673,8 +672,7 @@ class GameState {
           filter_mag: gl.LINEAR,
         });
       }
-      // @ts-expect-error TODO!
-      this.power_tex.updateData(w, w, power_buf);
+      this.power_tex!.updateData(w, w, power_buf);
 
       if (!this.power_sprite) {
         this.power_sprite = spriteCreate({
