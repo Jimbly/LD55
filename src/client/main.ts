@@ -61,12 +61,12 @@ import {
 } from 'glov/client/textures';
 import {
   LINE_CAP_ROUND,
+  UISpriteSet,
   buttonImage,
   buttonText,
   buttonWasFocused,
   drawCircle,
   drawElipse,
-  drawHBox,
   drawLine,
   drawRect,
   panel,
@@ -144,7 +144,6 @@ const palette = [
   vec4(1, 0, 0, 1),
   vec4(1, 0.6, 0.5, 1),
 ];
-const font_palette = palette.map(intColorFromVec4Color);
 const PALETTE_CIRCLE = 15;
 // const PALETTE_LINE = 0;
 const PALETTE_BG = 2;
@@ -156,12 +155,7 @@ const PALETTE_POWER = PALETTE_GLOW;
 const PALETTE_SYMERROR_HIGHLIGHT = 3;
 const PALETTE_SYMERROR_NORMAL = 17;
 const PALETTE_SYMMATCH = 13;
-const PALETTE_CRIM_BG = 7;
-const PALETTE_CRIM_TEXT = 7;
-const PALETTE_CRIM_BAR = 8;
 const PALETTE_CRIM_KNOWLEDGE_BAR = 9;
-const PALETTE_CRIM_BORDER = 10;
-const PALETTE_CRIM_CARD = 11;
 const PALETTE_OFFWHITE = 12;
 const PALETTE_TARGET_GLOW = 16;
 
@@ -244,7 +238,7 @@ const power_todo = new Uint32Array(AREA_CANVAS_W * AREA_CANVAS_W);
 
 let rand = randCreate(1);
 
-type EvalType = 'components' | 'ink' | 'symmetry' | 'cells' | 'power';
+type EvalType = 'components' | 'symmetry' | 'cells' | 'power';
 type Evaluation = Record<EvalType, number>;
 type DemonTarget = {
   // gen-time
@@ -254,7 +248,6 @@ type DemonTarget = {
 } & Record<EvalType, number>;
 let ranges: Record<EvalType, [number, number]> = {
   components: [3, 40],
-  ink: [25, 450],
   cells: [2, 50],
   symmetry: [0, 100],
   power: [5, 100],
@@ -273,12 +266,11 @@ function randFromRange(range: [number, number], normalize: number): number {
 function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
 
   let components = randFromRange(ranges.components, 2);
-  let ink = randFromRange(ranges.ink, 0);
+  randFromRange([1,50], 0); // was: ink
   let cells = randFromRange(ranges.cells, 0);
   let symmetry = randFromRange(ranges.symmetry, 0);
   let power = randFromRange(ranges.power, 0);
 
-  //let knowledge_points = [0.2, 0.4, 0.6, 0.8, 1];
   let seed = rand.range(10000);
 
   let name;
@@ -301,7 +293,6 @@ function randomDemonTarget(existing: DemonTarget[]): DemonTarget {
     name: name[0],
     color: name[1],
     components,
-    ink,
     cells,
     symmetry,
     power,
@@ -320,7 +311,6 @@ const EVALS: [EvalType, string, number, number][] = [
   ['components', 'Components', 0, -1],
   ['power', 'Power', 1, 0],
   ['cells', 'Cells', 0, 1],
-  // ['ink', 'Ink'],
   ['symmetry', 'Symmetry', -1, 0],
 ];
 
@@ -703,14 +693,9 @@ class GameState {
       symcount: 0,
     };
     let symmap = this.symmap;
-    let ink = 0;
     let symmetry = 0;
     let symmax = 0;
-    for (let ii = 0; ii < circles.length; ++ii) {
-      let r = circles[ii];
-      ++components;
-      ink += 2 * PI * r;
-    }
+    components += circles.length;
     let all_lines: TSMap<true> = {};
     for (let ii = 0; ii < lines.length; ++ii) {
       all_lines[lines[ii].join(',')] = true;
@@ -718,15 +703,6 @@ class GameState {
     for (let ii = 0; ii < lines.length; ++ii) {
       let [c0, a0, c1, a1] = lines[ii];
       ++components;
-      let r0 = circles[c0];
-      let r1 = circles[c1];
-      let a0r = a0 / ANGLE_STEPS * 2 * PI;
-      let a1r = a1 / ANGLE_STEPS * 2 * PI;
-      let x0 = sin(a0r) * r0;
-      let y0 = cos(a0r) * r0;
-      let x1 = sin(a1r) * r1;
-      let y1 = cos(a1r) * r1;
-      ink += sqrt((x1 - x0)*(x1 - x0) + (y1 - y0) * (y1 - y0));
 
       // check for symmetry
       let is_sym = false;
@@ -774,7 +750,6 @@ class GameState {
     }
     for (let ii = 0; ii < power.length; ++ii) {
       ++components;
-      ink += 3; // plus symbol?
 
       // check for symmetry
       let [c0, a0] = power[ii];
@@ -812,7 +787,6 @@ class GameState {
 
     this.evaluation = {
       components,
-      ink,
       cells,
       power: power_eval,
       symmetry: (symmax ? symmetry / symmax : 1) * 100,
@@ -833,9 +807,6 @@ let font: Font;
 
 let game_state: GameState;
 let sprite_runes: Sprite;
-let sprite_bar_border: Sprite;
-let sprite_bar_fill: Sprite;
-let sprite_bar_marker: Sprite;
 let sprite_graph: Sprite;
 let sprite_demonrect: Sprite;
 let sprite_radarrect: Sprite;
@@ -864,9 +835,6 @@ function init(): void {
   });
   getGameState();
   sprite_runes = autoAtlas('runes', 'def');
-  sprite_bar_border = autoAtlas('misc', 'bar_border');
-  sprite_bar_fill = autoAtlas('misc', 'bar_fill');
-  sprite_bar_marker = autoAtlas('misc', 'marker').withOrigin(vec2(0.5, 0));
   sprite_graph = spriteCreate({
     name: 'graph',
     filter_min: gl.LINEAR_MIPMAP_LINEAR,
@@ -888,10 +856,6 @@ function init(): void {
     filter_mag: gl.LINEAR,
     wrap_s: gl.REPEAT,
     wrap_t: gl.CLAMP_TO_EDGE,
-  });
-  markdownImageRegister('gp', {
-    sprite: autoAtlas('misc', 'gp'),
-    frame: 0,
   });
   markdownImageRegister('spacer', {
     sprite: autoAtlas('misc', 'spacer'),
@@ -1209,152 +1173,7 @@ function drawDemon2(): void {
   });
 }
 
-const EVAL_W = 200;
 const PAD = 8;
-const DEMON_W = 364;
-const DEMON_H = 203;
-const DEMON_BORDER = 3;
-const DEMON_PORTRAIT_W = 138;
-const DEMON_PORTRAIT_X = 8;
-const DEMON_PORTRAIT_Y = 37;
-const EVAL_BAR_H = 26;
-const EVAL_BAR_W = 160;
-const EVAL_BAR_PAD = 9;
-const style_crim_text = fontStyle(null, {
-  color: font_palette[PALETTE_CRIM_TEXT],
-  glow_color: font_palette[PALETTE_CRIM_BG] & 0xFFFFFF00 | 0x50,
-  glow_xoffs: 2.5,
-  glow_yoffs: 2.5,
-  glow_inner: 0,
-  glow_outer: 4,
-});
-const style_eval_target = fontStyle(null, {
-  color: font_palette[PALETTE_CRIM_TEXT],
-  glow_color: font_palette[PALETTE_CRIM_CARD],
-  glow_inner: 0,
-  glow_outer: 5,
-});
-function drawDemons(): void {
-  const { target } = game_state;
-  const x0 = game_width - PAD - DEMON_W;
-  let y = (game_height - DEMON_H) / 2;
-  // for (let ii = 0; ii < targets.length; ++ii) {
-  if (true) {
-    let z = Z.DEMON;
-    // border
-    drawRect(x0, y, x0 + DEMON_W, y + DEMON_H, z, palette[PALETTE_CRIM_BORDER]);
-    z++;
-    // light bg
-    drawRect(x0 + DEMON_BORDER, y + DEMON_BORDER, x0 + DEMON_W - DEMON_BORDER,
-      y + DEMON_H - DEMON_BORDER,
-      z, palette[PALETTE_CRIM_CARD]);
-    z++;
-
-    markdownAuto({
-      x: x0 + 10,
-      y: y + 10,
-      z,
-      text_height: 20,
-      font_style: style_crim_text,
-      text: target.name,
-    });
-
-    drawRect(x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y,
-      x0 + DEMON_PORTRAIT_X + DEMON_PORTRAIT_W,
-      y + DEMON_PORTRAIT_Y + DEMON_PORTRAIT_W,
-      z - 0.5,
-      [0,0,0,1]);
-
-    drawDemonPortrait(target,
-      x0 + DEMON_PORTRAIT_X, y + DEMON_PORTRAIT_Y,
-      DEMON_PORTRAIT_W);
-
-    let match = evalMatch(game_state.evaluation, target);
-    if (match) {
-      font.draw({
-        x: x0 + DEMON_PORTRAIT_X,
-        y: y + DEMON_PORTRAIT_Y,
-        z: z,
-        w: DEMON_PORTRAIT_W,
-        h: DEMON_PORTRAIT_W - 2,
-        size: 16,
-        align: ALIGN.HCENTER | ALIGN.VBOTTOM,
-        text: `${formatMatch(match)} match`,
-      });
-    }
-
-    let yy = y + 32 + EVAL_BAR_PAD;
-    let bar_x = x0 + DEMON_W - DEMON_BORDER - 2 - EVAL_BAR_W;
-    let text_x = x0 + 148;
-
-    for (let jj = 0; jj < EVALS.length; ++jj) {
-      let eval_type = EVALS[jj][0];
-      let label = EVALS[jj][1];
-      font.draw({
-        style: style_crim_text,
-        x: text_x,
-        y: yy,
-        z,
-        size: 20,
-        h: EVAL_BAR_H,
-        align: ALIGN.VCENTER,
-        text: label === 'Cells' ? 'Cell' : label.slice(0, 3),
-      });
-      let range = ranges[eval_type];
-      let my_p = clamp((game_state.evaluation[eval_type] - range[0]) / (range[1] - range[0]), 0, 1);
-      let am_close = false;
-      let value_str = '?';
-      let value = target[eval_type];
-      let p = (value - range[0]) / (range[1] - range[0]);
-      if (p) {
-        drawHBox({
-          x: bar_x - 1,
-          y: yy - 1,
-          z: z - 0.5,
-          w: (EVAL_BAR_W) * p + 3,
-          h: EVAL_BAR_H + 2,
-          no_min_width: true,
-        }, sprite_bar_fill, palette[PALETTE_CRIM_BAR]);
-      }
-      value_str = `${value}`;
-      am_close = abs(p - my_p) < MATCH_PERFECT;
-      font.draw({
-        style: style_eval_target,
-        x: bar_x,
-        y: yy,
-        z: z + 0.5,
-        w: EVAL_BAR_W,
-        h: EVAL_BAR_H,
-        size: 18,
-        alpha: value_str === '?' ? 0.25 : 1,
-        align: ALIGN.HVCENTER,
-        text: value_str,
-      });
-      let my_marker_x = clamp(bar_x + EVAL_BAR_W * my_p, bar_x + 3, bar_x + EVAL_BAR_W - 3);
-      let marker_pal = am_close ? PALETTE_CRIM_KNOWLEDGE_BAR : PALETTE_CRIM_BORDER;
-      sprite_bar_marker.draw({
-        x: my_marker_x,
-        y: yy,
-        z: z + 0.75,
-        w: 11/2,
-        h: 10/2,
-        color: palette[marker_pal],
-      });
-      drawLine(my_marker_x, yy, my_marker_x, yy + EVAL_BAR_H, z + 0.75, 2, 1, palette[marker_pal], 0);
-
-      drawHBox({
-        x: bar_x - 1,
-        y: yy - 1,
-        z,
-        w: EVAL_BAR_W + 2,
-        h: EVAL_BAR_H + 2,
-      }, sprite_bar_border, palette[PALETTE_CRIM_BG]);
-      yy += EVAL_BAR_H + EVAL_BAR_PAD;
-    }
-
-    y += DEMON_H + PAD;
-  }
-}
 
 const BUTTONS_W = 120;
 const color_disabled = vec4(0.6, 0.4, 1, 0.5);
@@ -1854,120 +1673,70 @@ function statePlay(dt: number): void {
     ...highlight_toggle,
   };
   let hover: Partial<Record<EvalType, boolean>> = {};
-  if (0) {
-    let xx = (game_width - EVALS.length * (EVAL_W + PAD) - PAD) / 2;
-    for (let ii = 0; ii < EVALS.length; ++ii) {
-      let pair = EVALS[ii];
-      let v = game_state.evaluation[pair[0]];
-      let extra = '';
-      let label = pair[1];
-      if (pair[0] === 'symmetry') {
-        extra = `\n${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
-      }
-      if (pair[0] === 'symmetry' || pair[0] === 'power') {
-        if (inputClick({
-          x: xx,
-          y: 10,
-          w: EVAL_W,
-          h: uiTextHeight() * 3,
-        })) {
-          playUISound('button_click');
-          highlight_toggle[pair[0]] = !highlight_toggle[pair[0]];
-        }
-      }
-      if (highlight_toggle[pair[0]]) {
-        label = `[${label}]`;
-      }
-      let text_h = font.draw({
-        style: style_eval,
-        x: xx - EVAL_W * 0.5,
-        y: 10,
-        w: EVAL_W * 2,
-        align: ALIGN.HCENTER | ALIGN.HWRAP,
-        text: `${label}\n${round(v)}${extra}`,
-      });
-      if ((pair[0] === 'symmetry' || pair[0] === 'cells' || pair[0] === 'power') && mouseOver({
-        x: xx,
-        y: 10,
-        w: EVAL_W,
-        h: text_h,
-      })) {
-        if (pair[0] === 'symmetry') {
-          highlight.symmetry = true;
-        } else if (pair[0] === 'cells') {
-          highlight.cells = !highlight.cells;
-        } else if (pair[0] === 'power') {
-          highlight.power = true;
-        }
-      }
-      xx += EVAL_W + PAD;
+  const EVAL2_W = 314/2 * GRAPH_SCALE;
+  const EVAL_TEXT_H = uiTextHeight() * 0.8*GRAPH_SCALE;
+  const HOT_EXTRA = 20 * GRAPH_SCALE;
+  for (let ii = 0; ii < EVALS.length; ++ii) {
+    let pair = EVALS[ii];
+    let v = game_state.evaluation[pair[0]];
+    let value = `${round(v)}`;
+    if (pair[0] === 'power') {
+      value = `${value}%`;
     }
-  } else {
-    const EVAL2_W = 314/2 * GRAPH_SCALE;
-    const EVAL_TEXT_H = uiTextHeight() * 0.8*GRAPH_SCALE;
-    const HOT_EXTRA = 20 * GRAPH_SCALE;
-    for (let ii = 0; ii < EVALS.length; ++ii) {
-      let pair = EVALS[ii];
-      let v = game_state.evaluation[pair[0]];
-      let value = `${round(v)}`;
-      if (pair[0] === 'power') {
-        value = `${value}%`;
-      }
-      let pos = eval_pos[ii];
-      let xx = pos[0] - EVAL2_W/2;
-      let yy = pos[1];
-      if (pair[0] === 'symmetry') {
-        value = `${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
-      }
+    let pos = eval_pos[ii];
+    let xx = pos[0] - EVAL2_W/2;
+    let yy = pos[1];
+    if (pair[0] === 'symmetry') {
+      value = `${game_state.symmap.symcount}/${game_state.symmap.symmax}`;
+    }
 
-      let hotspot = {
-        x: xx,
-        y: yy - EVAL_TEXT_H - HOT_EXTRA,
-        w: EVAL2_W,
-        h: EVAL_TEXT_H * 2 + HOT_EXTRA * 2,
-      };
-      if (pair[0] === 'symmetry' || pair[0] === 'power') {
-        if (inputClick(hotspot)) {
-          playUISound('button_click');
-          let new_v = !highlight_toggle[pair[0]];
-          if (new_v) {
-            highlight_toggle = {};
-          }
-          highlight_toggle[pair[0]] = new_v;
+    let hotspot = {
+      x: xx,
+      y: yy - EVAL_TEXT_H - HOT_EXTRA,
+      w: EVAL2_W,
+      h: EVAL_TEXT_H * 2 + HOT_EXTRA * 2,
+    };
+    if (pair[0] === 'symmetry' || pair[0] === 'power') {
+      if (inputClick(hotspot)) {
+        playUISound('button_click');
+        let new_v = !highlight_toggle[pair[0]];
+        if (new_v) {
+          highlight_toggle = {};
         }
+        highlight_toggle[pair[0]] = new_v;
       }
-      if (highlight_toggle[pair[0]]) {
-        value = `[${value}]`;
+    }
+    if (highlight_toggle[pair[0]]) {
+      value = `[${value}]`;
+    }
+    font.draw({
+      style: style_eval2,
+      x: xx,
+      y: yy,
+      w: EVAL2_W,
+      size: EVAL_TEXT_H,
+      align: ALIGN.HCENTER,
+      text: value,
+    });
+    let do_hover = false;
+    if (spot({
+      def: SPOT_DEFAULT_LABEL,
+      ...hotspot,
+      sound_rollover: 'rollover',
+    }).focused) {
+      do_hover = true;
+      hover[pair[0]] = true;
+      if (pair[0] === 'symmetry' && !highlight_toggle.power) {
+        highlight.symmetry = true;
+      } else if (pair[0] === 'power' && !highlight_toggle.symmetry) {
+        highlight.power = true;
+      } else {
+        highlight[pair[0]] = !highlight[pair[0]];
       }
-      font.draw({
-        style: style_eval2,
-        x: xx,
-        y: yy,
-        w: EVAL2_W,
-        size: EVAL_TEXT_H,
-        align: ALIGN.HCENTER,
-        text: value,
-      });
-      let do_hover = false;
-      if (spot({
-        def: SPOT_DEFAULT_LABEL,
-        ...hotspot,
-        sound_rollover: 'rollover',
-      }).focused) {
-        do_hover = true;
-        hover[pair[0]] = true;
-        if (pair[0] === 'symmetry' && !highlight_toggle.power) {
-          highlight.symmetry = true;
-        } else if (pair[0] === 'power' && !highlight_toggle.symmetry) {
-          highlight.power = true;
-        } else {
-          highlight[pair[0]] = !highlight[pair[0]];
-        }
-      }
-      if (do_hover || highlight[pair[0]]) {
-        drawElipse(hotspot.x, hotspot.y, hotspot.x + hotspot.w, hotspot.y + hotspot.h,
-          Z.UI - 1, 0.1, palette[PALETTE_GLOW]);
-      }
+    }
+    if (do_hover || highlight[pair[0]]) {
+      drawElipse(hotspot.x, hotspot.y, hotspot.x + hotspot.w, hotspot.y + hotspot.h,
+        Z.UI - 1, 0.1, palette[PALETTE_GLOW]);
     }
   }
 
@@ -2001,9 +1770,6 @@ function statePlay(dt: number): void {
   tex2_transform[2] = -((MC_XC - area_canvas_size / 2) - camera2d.x0Real()) / area_canvas_size;
   tex2_transform[3] = 1 + ((camera2d.y1Real() - (MC_YC + area_canvas_size / 2)) / area_canvas_size);
 
-  if (false) {
-    drawDemons();
-  }
   drawLevel();
 
   let { circles, lines, power, placing } = game_state;
@@ -2430,8 +2196,23 @@ export function main(): void {
   const font_info_ld55 = require('./img/font/ld55gochi.json');
   let pixely = 'off';
   let font_def = { info: font_info_ld55, texture: 'font/ld55gochi' };
-  let ui_sprites;
+  let ui_sprites: UISpriteSet = {};
   let pixel_perfect = 0;
+  ([
+    'progress_bar',
+    'progress_bar_trough',
+    'collapsagories',
+    'collapsagories_rollover',
+    'collapsagories_shadow_down',
+    'menu_entry',
+    'menu_selected',
+    'menu_down',
+    'menu_header',
+    'slider',
+    'slider_handle',
+  ] as const).forEach((key) => {
+    ui_sprites[key] = { atlas: 'default', name: 'button' };
+  });
 
   effects.registerShader('glow_merge', {
     fp: 'shaders/effects_glow_merge.fp',
