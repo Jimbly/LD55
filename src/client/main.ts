@@ -645,10 +645,9 @@ class GameState {
           filter_min: gl.NEAREST,
           filter_mag: gl.NEAREST,
         });
-      } else {
-        // @ts-expect-error TODO!
-        this.area_tex.updateData(w, w, area_buf);
       }
+      // @ts-expect-error TODO!
+      this.area_tex.updateData(w, w, area_buf);
 
       if (!this.area_sprite) {
         this.area_sprite = spriteCreate({
@@ -677,10 +676,9 @@ class GameState {
           filter_min: gl.LINEAR,
           filter_mag: gl.LINEAR,
         });
-      } else {
-        // @ts-expect-error TODO!
-        this.power_tex.updateData(w, w, power_buf);
       }
+      // @ts-expect-error TODO!
+      this.power_tex.updateData(w, w, power_buf);
 
       if (!this.power_sprite) {
         this.power_sprite = spriteCreate({
@@ -847,6 +845,7 @@ function getGameState(): void {
   if (!game_state) {
     game_state = game_state_cache[level_idx] = new GameState(level_idx);
   }
+  game_state.evaluate();
 }
 function init(): void {
   score_system = scoreAlloc({
