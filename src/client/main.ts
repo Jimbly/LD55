@@ -101,6 +101,8 @@ import { randomDemonName } from './demon_names';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const { PI, abs, atan2, cos, floor, max, min, round, sin, sqrt } = Math;
 
+const SCREENSHOT_MODE = false;
+
 window.Z = window.Z || {};
 Z.BACKGROUND = 1;
 Z.SPRITES = 10;
@@ -1107,9 +1109,6 @@ function drawDemon2(): void {
     ...target_hotspot,
     sound_rollover: 'rollover',
   }).focused;
-  if (engine.DEBUG) {
-    show_mine = false;
-  }
   if (!show_mine) {
     drawElipse(target_hotspot.x, target_hotspot.y, target_hotspot.x + target_hotspot.w, target_hotspot.y + target_hotspot.h,
       Z.UI - 1, 0.1, palette[PALETTE_TARGET_GLOW]);
@@ -1434,6 +1433,9 @@ function drawLevel(): void {
 
   let beat_level = game_state.best_score > 800 || engine.DEBUG;
   let show_high_scores = level_idx > 0 || beat_level;
+  if (SCREENSHOT_MODE) {
+    show_high_scores = false;
+  }
 
   y += text_height + PAD;
   font.draw({
@@ -1446,7 +1448,7 @@ function drawLevel(): void {
   });
   y += text_height * 1.5 + PAD;
   let demon_w_small = w/4;
-  let demon_w = beat_level ? demon_w_small : w / 2;
+  let demon_w = beat_level && !SCREENSHOT_MODE ? demon_w_small : w / 2;
   drawDemonPortrait(target, x + (w - demon_w)/2, y, demon_w);
 
   let button_w = BUTTONS_W;
@@ -1462,7 +1464,7 @@ function drawLevel(): void {
       getGameState();
     }
   }
-  if (level_idx >= FIXED_LEVELS || beat_level) {
+  if (level_idx >= FIXED_LEVELS || beat_level || SCREENSHOT_MODE) {
     if (myButton({
       icon: 'right',
       x: x + w - button_w,
@@ -2448,6 +2450,7 @@ export function main(): void {
     pixel_perfect,
     line_mode: 0,
     do_borders: false,
+    show_fps: false,
   })) {
     return;
   }
