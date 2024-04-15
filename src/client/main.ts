@@ -1356,6 +1356,7 @@ function drawLevel(): void {
     style_header,
     color_line: [1,1,1,1],
     color_me_background: [0.2,0.2,0.2,1],
+    rename_button_size: 7,
   });
 }
 
