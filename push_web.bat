@@ -1,7 +1,11 @@
 @SET TORTOISE_PATH=%ProgramW6432%\TortoiseSVN\bin\TortoiseProc.exe
 @SET DEST=..\..\SRC2\web\dashingstrike.com\LudumDare\LD55\
 
-xcopy /SY dist\game\build.dev\client %DEST%
+call node build build
+
+rd /s /q %DEST%
+md %DEST%
+xcopy /SY dist\game\build.prod\client %DEST%
 
 "%TORTOISE_PATH%" /command:commit /path:%DEST%  /logmsg:"LD55"
 
