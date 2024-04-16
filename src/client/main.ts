@@ -311,11 +311,13 @@ let score_system: ScoreSystem<Score>;
 
 const MATCH_PERFECT = 0.05;
 
-const EVALS: [EvalType, string, number, number][] = [
-  ['components', 'Components', 0, -1],
-  ['power', 'Power', 1, 0],
-  ['cells', 'Cells', 0, 1],
-  ['symmetry', 'Symmetry', -1, 0],
+const EVF1 = 120;
+const EVFH = EVF1/2;
+const EVALS: [EvalType, string, number, number, JSVec4][] = [
+  ['components', 'Components', 0, -1, [307-EVFH, 549, 316+EVF1, 100]],
+  ['power', 'Power', 1, 0, [783, 879-EVFH, 100, 191+EVF1]],
+  ['cells', 'Cells', 0, 1, [395-EVFH, 1304, 155+EVF1, 100]],
+  ['symmetry', 'Symmetry', -1, 0, [53, 833-EVFH, 100, 294+EVF1]],
 ];
 
 function evalMatch(evaluation: Evaluation, demon: DemonTarget): number {
@@ -1040,13 +1042,15 @@ function formatMatch(v: number): string {
 const GRAPH_SCALE = 1.1;
 const GRAPH_W = 940/2 * GRAPH_SCALE;
 const GRAPH_H = 1650/2 * GRAPH_SCALE;
+const GRAPH_X = game_width - GRAPH_W;
+const GRAPH_Y = 16;
 const GRAPH_R = 340/2 * GRAPH_SCALE;
 const GRAPH_MIN_R = 0.1;
 let eval_pos: [Vec2, Vec2, Vec2, Vec2] = [vec2(), vec2(), vec2(), vec2()];
 function drawDemon2(): void {
   const { evaluation, target } = game_state;
-  const x0 = game_width - GRAPH_W;
-  let y = 16;
+  const x0 = GRAPH_X;
+  let y = GRAPH_Y;
   sprite_graph.draw({
     x: x0,
     y,
@@ -1719,8 +1723,15 @@ function statePlay(dt: number): void {
       w: EVAL2_W,
       h: EVAL_TEXT_H * 2 + HOT_EXTRA * 2,
     };
+    let hs2pos: JSVec4 = pair[4];
+    let hotspot2 = {
+      x: GRAPH_X + hs2pos[0]/2 * GRAPH_SCALE,
+      y: GRAPH_Y + hs2pos[1]/2 * GRAPH_SCALE,
+      w: hs2pos[2]/2 * GRAPH_SCALE,
+      h: hs2pos[3]/2 * GRAPH_SCALE,
+    };
     if (pair[0] === 'symmetry' || pair[0] === 'power') {
-      if (inputClick(hotspot)) {
+      if (inputClick(hotspot) || inputClick(hotspot2)) {
         playUISound('button_click');
         let new_v = !highlight_toggle[pair[0]];
         if (new_v) {
@@ -1741,13 +1752,17 @@ function statePlay(dt: number): void {
       align: ALIGN.HCENTER,
       text: value,
     });
-    let do_hover = false;
-    if (spot({
+    let f1 = false;
+    let f2 = false;
+    if ((f1 = spot({
       def: SPOT_DEFAULT_LABEL,
       ...hotspot,
       sound_rollover: 'rollover',
-    }).focused) {
-      do_hover = true;
+    }).focused) || (f2 = spot({
+      def: SPOT_DEFAULT_LABEL,
+      ...hotspot2,
+      sound_rollover: 'rollover',
+    }).focused)) {
       hover[pair[0]] = true;
       if (pair[0] === 'symmetry' && !highlight_toggle.power) {
         highlight.symmetry = true;
@@ -1757,11 +1772,16 @@ function statePlay(dt: number): void {
         highlight[pair[0]] = !highlight[pair[0]];
       }
     }
-    if (do_hover || highlight[pair[0]]) {
+    if (f1 || highlight_toggle[pair[0]]) {
       drawElipse(hotspot.x, hotspot.y, hotspot.x + hotspot.w, hotspot.y + hotspot.h,
         Z.UI - 1, 0.1, palette[PALETTE_GLOW]);
     }
+    if (f2 || highlight[pair[0]]) {
+      drawElipse(hotspot2.x, hotspot2.y, hotspot2.x + hotspot2.w, hotspot2.y + hotspot2.h,
+        Z.UI - 1, 0.1, palette[PALETTE_GLOW]);
+    }
   }
+
 
   queuePostprocess(Boolean(highlight.power), Boolean(highlight.symmetry));
 
