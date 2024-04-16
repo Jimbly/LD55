@@ -366,6 +366,16 @@ export function drawLine(
   color?: ROVec4,
   mode?: LineMode,
 ): void;
+export function drawLine2Color(
+  x0: number, y0: number,
+  x1: number, y1: number,
+  z: number,
+  w: number,
+  precise: number,
+  color0: ROVec4,
+  color1: ROVec4,
+  mode?: LineMode,
+): void;
 export function drawHollowRect(
   x0: number, y0: number,
   x1: number, y1: number,

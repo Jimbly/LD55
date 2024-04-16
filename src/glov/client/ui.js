@@ -80,6 +80,7 @@ const {
   spriteCreate,
   spriteQueueRaw,
   spriteQueueRaw4,
+  spriteQueueRaw4Color,
 } = require('./sprites.js');
 const { TEXTURE_FORMAT } = require('./textures.js');
 const {
@@ -2015,6 +2016,138 @@ export function drawLine(x0, y0, x1, y1, z, w, precise, color, mode) {
       z,
       LINE_U1, LINE_V1, LINE_U0, LINE_V0,
       color, glov_font.font_shaders.font_aa, shader_param, blend);
+  }
+}
+
+let temp_color_2 = vec4();
+export function drawLine2Color(x0, y0, x1, y1, z, w, precise, color0, color1, mode) {
+  if (mode === undefined) {
+    mode = default_line_mode;
+  }
+  let blend;
+  if (!glov_engine.defines.NOPREMUL) {
+    blend = BLEND_PREMULALPHA;
+    color1 = v4copy(temp_color_2, premulAlphaColor(color1));
+    color0 = premulAlphaColor(color0);
+  }
+
+  let tex_key = mode & LINE_CAP_ROUND ? 'line3' : 'line2';
+  if (!sprites[tex_key]) {
+    let data = new Uint8Array(LINE_TEX_W * LINE_TEX_H);
+    let i1 = LINE_MIDP;
+    let i2 = LINE_TEX_W - 1 - LINE_MIDP;
+    if (tex_key === 'line2') {
+      // rectangular caps
+      for (let j = 0; j < LINE_TEX_H; j++) {
+        let d = abs((j - LINE_MIDP) / LINE_MIDP);
+        let j_value = round(clamp(1 - d, 0, 1) * 255);
+        for (let i = 0; i < LINE_TEX_W; i++) {
+          d = i < i1 ? i/LINE_MIDP : i >= i2 ? 1 - (i-i2) / LINE_MIDP : 1;
+          let i_value = round(clamp(d, 0, 1) * 255);
+          data[i + j*LINE_TEX_W] = min(i_value, j_value);
+        }
+      }
+    } else {
+      // round caps
+      for (let j = 0; j < LINE_TEX_H; j++) {
+        let d = abs((j - LINE_MIDP) / LINE_MIDP);
+        for (let i = 0; i < LINE_TEX_W; i++) {
+          let id = i < i1 ? 1-i/LINE_MIDP : i >= i2 ? (i-i2) / LINE_MIDP : 0;
+          let dv = sqrt(id*id + d*d);
+          dv = clamp(1-dv, 0, 1);
+          data[i + j*LINE_TEX_W] = round(dv * 255);
+        }
+      }
+    }
+    sprites[tex_key] = spriteCreate({
+      url: tex_key,
+      width: LINE_TEX_W, height: LINE_TEX_H,
+      format: TEXTURE_FORMAT.R8,
+      data,
+      filter_min: gl.LINEAR,
+      filter_mag: gl.LINEAR,
+      wrap_s: gl.CLAMP_TO_EDGE,
+      wrap_t: gl.CLAMP_TO_EDGE,
+    });
+  }
+  let texs = sprites[tex_key].texs;
+
+  const camera_xscale = camera2d.data[4];
+  const camera_yscale = camera2d.data[5];
+  let virtual_to_pixels = (camera_xscale + camera_yscale) * 0.5;
+  let pixels_to_virutal = 1/virtual_to_pixels;
+  let w_in_pixels = w * virtual_to_pixels;
+  let draw_w_pixels = w_in_pixels + 2*2;
+  let half_draw_w_pixels = draw_w_pixels * 0.5;
+  let draw_w = half_draw_w_pixels * pixels_to_virutal;
+  // let tex_delta_for_pixel = 1 / draw_w_pixels; // should be 51/255 for width=1 (draw_w_pixels = 5)
+
+  let dx = x1 - x0;
+  let dy = y1 - y0;
+  let length = sqrt(dx*dx + dy*dy);
+  dx /= length;
+  dy /= length;
+  let tangx = -dy * draw_w;
+  let tangy = dx * draw_w;
+
+  if (mode & LINE_ALIGN) {
+    // align drawing so that the edge of the line is aligned with a pixel edge
+    //   (avoids a 0.1,1.0,0.1 line drawing in favor of 1.0,0.2, which will be crisper, if slightly visually offset)
+    let y0_real = (y0 - camera2d.data[1]) * camera2d.data[5];
+    let y0_real_aligned = round(y0_real - half_draw_w_pixels) + half_draw_w_pixels;
+    let yoffs = (y0_real_aligned - y0_real) / camera2d.data[5];
+    y0 += yoffs;
+    y1 += yoffs;
+
+    let x0_real = (x0 - camera2d.data[0]) * camera2d.data[4];
+    let x0_real_aligned = round(x0_real - half_draw_w_pixels) + half_draw_w_pixels;
+    let xoffs = (x0_real_aligned - x0_real) / camera2d.data[4];
+    x0 += xoffs;
+    x1 += xoffs;
+  }
+
+  let tex_delta_for_pixel = 2/draw_w_pixels;
+  let step_start = 1 - (w_in_pixels + 1) / draw_w_pixels;
+  let step_end = step_start + tex_delta_for_pixel;
+  step_end = 1 + precise * (step_end - 1);
+  let A = 1.0 / (step_end - step_start);
+  let B = -step_start * A;
+  let shader_param;
+  if (line_last_shader_param.param0[0] !== A ||
+    line_last_shader_param.param0[1] !== B
+  ) {
+    line_last_shader_param = { param0: [A, B] };
+  }
+  shader_param = line_last_shader_param;
+
+  spriteQueueRaw4Color(texs,
+    x1 + tangx, y1 + tangy, color1, LINE_U1, LINE_V0,
+    x1 - tangx, y1 - tangy, color1, LINE_U1, LINE_V1,
+    x0 - tangx, y0 - tangy, color0, LINE_U2, LINE_V1,
+    x0 + tangx, y0 + tangy, color0, LINE_U2, LINE_V0,
+    z,
+    glov_font.font_shaders.font_aa, shader_param, blend);
+
+  if (mode & (LINE_CAP_ROUND|LINE_CAP_SQUARE)) {
+    // round caps (line3) - square caps (line2)
+    let nx = dx * w/2;
+    let ny = dy * w/2;
+    spriteQueueRaw4(texs,
+      x1 - tangx, y1 - tangy,
+      x1 + tangx, y1 + tangy,
+      x1 + tangx + nx, y1 + tangy + ny,
+      x1 - tangx + nx, y1 - tangy + ny,
+      z,
+      LINE_U2, LINE_V1, LINE_U3, LINE_V0,
+      color1, glov_font.font_shaders.font_aa, shader_param, blend);
+    spriteQueueRaw4(texs,
+      x0 - tangx, y0 - tangy,
+      x0 + tangx, y0 + tangy,
+      x0 + tangx - nx, y0 + tangy - ny,
+      x0 - tangx - nx, y0 - tangy - ny,
+      z,
+      LINE_U1, LINE_V1, LINE_U0, LINE_V0,
+      color0, glov_font.font_shaders.font_aa, shader_param, blend);
   }
 }
 

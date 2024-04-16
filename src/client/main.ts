@@ -57,6 +57,7 @@ import {
   spriteCreate,
   spriteQueueFn,
   spriteQueueRaw4,
+  spriteQueueRaw4Color,
 } from 'glov/client/sprites';
 import {
   TEXTURE_FORMAT,
@@ -72,6 +73,7 @@ import {
   drawCircle,
   drawElipse,
   drawLine,
+  drawLine2Color,
   drawRect,
   panel,
   playUISound,
@@ -89,6 +91,7 @@ import { randCreate } from 'glov/common/rand_alea';
 import { DataObject, TSMap, VoidFunc } from 'glov/common/types';
 import { clamp, nop, ridx } from 'glov/common/util';
 import {
+  ROVec4,
   Vec2,
   Vec4,
   unit_vec,
@@ -1039,6 +1042,13 @@ function formatMatch(v: number): string {
   return `${v}%`;
 }
 
+const color_my_line = vec4(0.5,1,1,1);
+const LINE_DIM = 0.125;
+const color_my_line_dim = vec4(color_my_line[0], color_my_line[1], color_my_line[2], LINE_DIM);
+const color_target_line = vec4(1, 1, 1, 1);
+const color_target_line_solo = vec4(1, 1, 1, 1.5);
+const color_target_line_dim = vec4(color_target_line[0], color_target_line[1], color_target_line[2], LINE_DIM);
+
 const GRAPH_SCALE = 1.1;
 const GRAPH_W = 940/2 * GRAPH_SCALE;
 const GRAPH_H = 1650/2 * GRAPH_SCALE;
@@ -1047,7 +1057,7 @@ const GRAPH_Y = 16;
 const GRAPH_R = 340/2 * GRAPH_SCALE;
 const GRAPH_MIN_R = 0.1;
 let eval_pos: [Vec2, Vec2, Vec2, Vec2] = [vec2(), vec2(), vec2(), vec2()];
-function drawDemon2(): void {
+function drawDemon2(hover: Partial<Record<EvalType, boolean>>): void {
   const { evaluation, target } = game_state;
   const x0 = GRAPH_X;
   let y = GRAPH_Y;
@@ -1059,6 +1069,13 @@ function drawDemon2(): void {
     h: GRAPH_H,
   });
 
+  let any_hover = false;
+  for (let key in hover) {
+    if ((hover as DataObject)[key]) {
+      any_hover = true;
+    }
+  }
+
   let xc = x0 + GRAPH_W/2;
   let yc = y + 974/2*GRAPH_SCALE;
   v2set(eval_pos[0], x0 + 313/2*GRAPH_SCALE, y + 127/2*GRAPH_SCALE);
@@ -1066,9 +1083,9 @@ function drawDemon2(): void {
   v2set(eval_pos[2], x0 + 313/2*GRAPH_SCALE, y + 307/2*GRAPH_SCALE);
   v2set(eval_pos[3], x0 + (940 - 313)/2*GRAPH_SCALE, y + 307/2*GRAPH_SCALE);
 
-  let my_lines: [number, number][] = [];
+  let my_lines: [number, number, ROVec4][] = [];
   let my_y2: number[] = [];
-  let target_lines: [number, number][] = [];
+  let target_lines: [number, number, ROVec4][] = [];
   let target_y2: number[] = [];
   const font_height = uiTextHeight() * 0.8 * GRAPH_SCALE;
   let target_hotspot = {
@@ -1096,16 +1113,19 @@ function drawDemon2(): void {
     let target_r = GRAPH_MIN_R + (1 - GRAPH_MIN_R) * target_p;
     let am_close = abs(target_p - my_p) < MATCH_PERFECT;
 
+    let do_dim = any_hover && !hover[eval_type];
+    let is_solo = any_hover && hover[eval_type];
+
     let line_offs = my_r * GRAPH_R;
     let myx = xc + dx * line_offs;
     let myy = yc + dy * line_offs;
-    my_lines.push([myx, myy]);
+    my_lines.push([myx, myy, do_dim ? color_my_line_dim : color_my_line]);
     my_y2.push(yc + dy * line_offs * 2);
 
     line_offs = target_r * GRAPH_R;
     let targetx = xc + dx * line_offs;
     let targety = yc + dy * line_offs;
-    target_lines.push([targetx, targety]);
+    target_lines.push([targetx, targety, do_dim ? color_target_line_dim : is_solo ? color_target_line_solo : color_target_line]);
     target_y2.push(yc + dy * line_offs * 2);
 
     let value = `${round(show_mine ? my_value : target_value)}`;
@@ -1126,15 +1146,19 @@ function drawDemon2(): void {
     } else if (jj === 3) {
       desired_x = clamp(desired_x, xc - GRAPH_R + text_w/2 + minipad, xc - text_w/2 - minipad);
     }
-    font.drawSizedAligned(am_close ? style_eval_match : show_mine ? style_eval : style_eval_target2,
-      desired_x, desired_y, Z.UI, font_height, ALIGN.HCENTER, 0, 0, value);
-
+    if (any_hover && !hover[eval_type]) {
+      // draw nothing
+    } else {
+      font.drawSizedAligned(am_close ? style_eval_match : show_mine ? style_eval : style_eval_target2,
+        desired_x, desired_y, Z.UI, font_height, ALIGN.HCENTER, 0, 0, value);
+    }
   }
 
   let last = my_lines[3];
   for (let ii = 0; ii < my_lines.length; ++ii) {
     let pos = my_lines[ii];
-    drawLine(last[0], last[1], pos[0], pos[1], Z.LINES + 1, 3*GRAPH_SCALE, 1, [0.5,1,1,1]);
+    drawLine2Color(last[0], last[1], pos[0], pos[1], Z.LINES + 1, 3*GRAPH_SCALE, 1,
+      last[2], pos[2]);
     last = pos;
   }
 
@@ -1159,14 +1183,12 @@ function drawDemon2(): void {
   // }
   let txc = (target_lines[1][0] + target_lines[3][0]) / 2;
   let txw = target_lines[3][0] - target_lines[1][0];
-  spriteQueueRaw4(sprite_demonrect.texs,
-    xc + xc - txc, target_y2[0],
-    txc + txw, target_y2[1],
-    xc + xc - txc, target_y2[2],
-    txc - txw, target_y2[3],
-    51,
-    0, 0, 1, 1,
-    unit_vec);
+  spriteQueueRaw4Color(sprite_demonrect.texs,
+    xc + xc - txc, target_y2[0], target_lines[0][2], 0, 0,
+    txc + txw, target_y2[1], target_lines[3][2], 1, 0,
+    xc + xc - txc, target_y2[2], target_lines[2][2], 1, 1,
+    txc - txw, target_y2[3], target_lines[1][2], 0, 1,
+    51);
 
   let match = evalMatch(evaluation, target);
   font.draw({
@@ -1636,8 +1658,6 @@ function statePlay(dt: number): void {
   overlay_active = false;
   gl.clearColor(palette[PALETTE_BG][0], palette[PALETTE_BG][1], palette[PALETTE_BG][2], 0);
 
-  drawDemon2();
-
   tickMusic();
 
   let spot_ret = spot({
@@ -1782,6 +1802,7 @@ function statePlay(dt: number): void {
     }
   }
 
+  drawDemon2(hover);
 
   queuePostprocess(Boolean(highlight.power), Boolean(highlight.symmetry));
 
