@@ -62,6 +62,7 @@ import {
   TEXTURE_FORMAT,
   textureLoad,
 } from 'glov/client/textures';
+import * as transition from 'glov/client/transition';
 import {
   LINE_CAP_ROUND,
   UISpriteSet,
@@ -1038,14 +1039,14 @@ function formatMatch(v: number): string {
 
 const GRAPH_SCALE = 1.1;
 const GRAPH_W = 940/2 * GRAPH_SCALE;
-const GRAPH_H = 1536/2 * GRAPH_SCALE;
+const GRAPH_H = 1650/2 * GRAPH_SCALE;
 const GRAPH_R = 340/2 * GRAPH_SCALE;
 const GRAPH_MIN_R = 0.1;
 let eval_pos: [Vec2, Vec2, Vec2, Vec2] = [vec2(), vec2(), vec2(), vec2()];
 function drawDemon2(): void {
   const { evaluation, target } = game_state;
   const x0 = game_width - GRAPH_W;
-  let y = (game_height - GRAPH_H) / 2;
+  let y = 16;
   sprite_graph.draw({
     x: x0,
     y,
@@ -1056,10 +1057,10 @@ function drawDemon2(): void {
 
   let xc = x0 + GRAPH_W/2;
   let yc = y + 974/2*GRAPH_SCALE;
-  v2set(eval_pos[0], x0 + 313/2*GRAPH_SCALE, y + 242/2*GRAPH_SCALE);
-  v2set(eval_pos[1], x0 + (940 - 313)/2*GRAPH_SCALE, y + 242/2*GRAPH_SCALE);
-  v2set(eval_pos[2], x0 + 313/2*GRAPH_SCALE, y + 422/2*GRAPH_SCALE);
-  v2set(eval_pos[3], x0 + (940 - 313)/2*GRAPH_SCALE, y + 422/2*GRAPH_SCALE);
+  v2set(eval_pos[0], x0 + 313/2*GRAPH_SCALE, y + 127/2*GRAPH_SCALE);
+  v2set(eval_pos[1], x0 + (940 - 313)/2*GRAPH_SCALE, y + 127/2*GRAPH_SCALE);
+  v2set(eval_pos[2], x0 + 313/2*GRAPH_SCALE, y + 307/2*GRAPH_SCALE);
+  v2set(eval_pos[3], x0 + (940 - 313)/2*GRAPH_SCALE, y + 307/2*GRAPH_SCALE);
 
   let my_lines: [number, number][] = [];
   let my_y2: number[] = [];
@@ -1067,7 +1068,7 @@ function drawDemon2(): void {
   let target_y2: number[] = [];
   const font_height = uiTextHeight() * 0.8 * GRAPH_SCALE;
   let target_hotspot = {
-    x: x0, y: y + GRAPH_H - 80*GRAPH_SCALE,
+    x: x0, y: y + 1392/2*GRAPH_SCALE,
     w: GRAPH_W, h: 60*GRAPH_SCALE,
   };
   let show_mine = !spot({
@@ -1166,11 +1167,19 @@ function drawDemon2(): void {
   let match = evalMatch(evaluation, target);
   font.draw({
     style: style_eval,
-    x: xc, y: yc,
-    w: GRAPH_R, h: GRAPH_R,
-    size: font_height,
-    align: ALIGN.HRIGHT | ALIGN.VBOTTOM,
+    x: xc - GRAPH_W/4,
+    y: y + 1586/2*GRAPH_SCALE,
+    size: font_height * 1.5,
+    align: ALIGN.HCENTER,
     text: `${formatMatch(match)}`,
+  });
+  font.draw({
+    style: game_state.best_score >= 800 ? style_eval_match : style_eval,
+    x: xc + GRAPH_W/4,
+    y: y + 1586/2*GRAPH_SCALE,
+    size: font_height * 1.5,
+    align: ALIGN.HCENTER,
+    text: `${formatMatch(game_state.best_score)}`, // Your best
   });
 }
 
@@ -1243,6 +1252,16 @@ function drawLevel(): void {
   let w = MC_X0 - POWER_R - x - PAD;
   let { target } = game_state;
 
+  let beat_level = game_state.best_score > 800 || engine.DEBUG;
+  let show_high_scores = level_idx > 0 || beat_level;
+  if (SCREENSHOT_MODE) {
+    show_high_scores = false;
+  }
+
+  if (!show_high_scores && !beat_level || SCREENSHOT_MODE) {
+    y += 100;
+  }
+
   let text_height = uiTextHeight();
   font.draw({
     style: style_eval,
@@ -1251,12 +1270,6 @@ function drawLevel(): void {
     align: ALIGN.HCENTER,
     text: `Target #${level_idx+1}:`,
   });
-
-  let beat_level = game_state.best_score > 800 || engine.DEBUG;
-  let show_high_scores = level_idx > 0 || beat_level;
-  if (SCREENSHOT_MODE) {
-    show_high_scores = false;
-  }
 
   y += text_height + PAD;
   font.draw({
@@ -1269,7 +1282,7 @@ function drawLevel(): void {
   });
   y += text_height * 1.5 + PAD;
   let demon_w_small = w/4;
-  let demon_w = beat_level && !SCREENSHOT_MODE ? demon_w_small : w / 2;
+  let demon_w = w/2; // beat_level && !SCREENSHOT_MODE ? demon_w_small : w / 2;
   drawDemonPortrait(target, x + (w - demon_w)/2, y, demon_w);
 
   let button_w = BUTTONS_W;
@@ -1283,6 +1296,7 @@ function drawLevel(): void {
     })) {
       level_idx--;
       getGameState();
+      transition.queue(Z.TRANSITION_FINAL, transition.fade(500));
     }
   }
   if (level_idx >= FIXED_LEVELS || beat_level || SCREENSHOT_MODE) {
@@ -1299,37 +1313,43 @@ function drawLevel(): void {
         show_game_complete = true;
       }
       getGameState();
+      transition.queue(Z.TRANSITION_FINAL, transition.fade(500));
     }
+  } else if (level_idx !== MAX_LEVEL - 1 && keyDownEdge(KEYS.EQUALS)) {
+    level_idx++;
+    getGameState();
+    transition.queue(Z.TRANSITION_FINAL, transition.fade(500));
   }
 
   y += demon_w + PAD;
 
-  font.draw({
-    style: style_eval,
-    x, y, w,
-    size: text_height,
-    align: ALIGN.HCENTER,
-    text: `Current Match: ${formatMatch(game_state.cur_score)}`,
-  });
-  y += text_height + PAD * 2;
-  font.draw({
-    style: style_eval,
-    x, y, w,
-    size: text_height,
-    align: ALIGN.HCENTER,
-    text: `Your best: ${formatMatch(game_state.best_score)}`,
-  });
-  y += text_height + PAD * 2;
+  // font.draw({
+  //   style: style_eval,
+  //   x, y, w,
+  //   size: text_height,
+  //   align: ALIGN.HCENTER,
+  //   text: `Current Match: ${formatMatch(game_state.cur_score)}`,
+  // });
+  // y += text_height + PAD * 2;
+  // font.draw({
+  //   style: style_eval,
+  //   x, y, w,
+  //   size: text_height,
+  //   align: ALIGN.HCENTER,
+  //   text: `Your best: ${formatMatch(game_state.best_score)}`,
+  // });
+  // y += text_height + PAD * 2;
 
-  if (!show_high_scores || !beat_level) {
+  if (!show_high_scores && !beat_level) {
     font.draw({
-      style: style_eval,
-      x, y, w,
-      size: text_height,
-      align: ALIGN.HCENTER,
-      text: `Goal: ${formatMatch(800)}`,
+      style: style_eval2,
+      x,
+      y: game_height - 160,
+      w,
+      size: text_height * 0.75,
+      align: ALIGN.HCENTER | ALIGN.HWRAP,
+      text: `Goal: Reach a match of ${formatMatch(800)} to unlock the next level.`,
     });
-    y += text_height + PAD * 2;
   }
 
   if (!show_high_scores) {
@@ -1389,7 +1409,7 @@ Each demon has its own tastes, and will evaluate your magic circle based on its 
 
 [img=spacer]
 
-[c=2]HINT: View detailed help information at any time by selecting the [img=help scale=1.5] in the upper right.[/c]
+[c=2]HINT: View detailed help information at any time by selecting the [img=help scale=1.5] in the upper left.[/c]
 `;
   } else if (type === 'help') {
     msg = `Demons evaluate magic circles by the following properties:
@@ -1439,6 +1459,7 @@ From here on out, there's an endless set of levels to play.`;
       z: Z.OVERLAY + 2,
       text: type === 'intro' ? 'Let\'s go!' : 'I rock!',
       in_event_cb: show_initial_help && inputTouchMode() ? leaveHelpAndEnterFullscreen : undefined,
+      focus_steal: true,
     })) {
       show_initial_help = false;
       show_game_complete = false;
@@ -1465,7 +1486,7 @@ let was_drag = false;
 let highlight_toggle: Partial<Record<EvalType, boolean>> = {};
 const HELP_W = 120;
 const BUTTON_PAD = 16;
-const HELP_X = game_width - BUTTON_PAD - HELP_W;
+const HELP_X = MC_X0 - POWER_R;
 const HELP_Y = BUTTON_PAD;
 const BUTTONS_X1 = game_width - BUTTON_PAD;
 const BUTTONS_Y0 = game_height - BUTTON_PAD - BUTTONS_W;
@@ -2215,17 +2236,6 @@ export function main(): void {
   ] as const).forEach((key) => {
     ui_sprites[key] = { atlas: 'default', name: 'button' };
   });
-  if (engine.defines.COMPO) {
-    ([
-      'scrollbar_bottom',
-      'scrollbar_handle',
-      'scrollbar_handle_grabber',
-      'scrollbar_top',
-      'scrollbar_trough'
-    ] as const).forEach((key) => {
-      ui_sprites[key] = { atlas: 'default', name: `${key}_compo` };
-    });
-  }
 
   effects.registerShader('glow_merge', {
     fp: 'shaders/effects_glow_merge.fp',
@@ -2250,7 +2260,7 @@ export function main(): void {
     ui_sprites,
     pixel_perfect,
     line_mode: 0,
-    do_borders: false,
+    // do_borders: false,
     show_fps: false,
   })) {
     return;
