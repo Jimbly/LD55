@@ -818,7 +818,7 @@ let sprite_graph: Sprite;
 let sprite_demonrect: Sprite;
 let sprite_radarrect: Sprite;
 let sprite_gradient: Sprite;
-let level_idx = 0;
+let level_idx = engine.DEBUG ? 3 : 0;
 const MAX_LEVEL = 1000;
 let game_state_cache: GameState[] = [];
 function getGameState(): void {
@@ -1115,6 +1115,8 @@ function drawDemon2(hover: Partial<Record<EvalType, boolean>>): void {
 
     let do_dim = any_hover && !hover[eval_type];
     let is_solo = any_hover && hover[eval_type];
+    let show_this_mine = show_mine && !do_dim || is_solo;
+    let show_this_target = !show_mine && !do_dim || is_solo;
 
     let line_offs = my_r * GRAPH_R;
     let myx = xc + dx * line_offs;
@@ -1128,29 +1130,98 @@ function drawDemon2(hover: Partial<Record<EvalType, boolean>>): void {
     target_lines.push([targetx, targety, do_dim ? color_target_line_dim : is_solo ? color_target_line_solo : color_target_line]);
     target_y2.push(yc + dy * line_offs * 2);
 
-    let value = `${round(show_mine ? my_value : target_value)}`;
+    let my_value_str = `${round(my_value)}`;
+    let target_value_str = `${round(target_value)}`;
     if (eval_type === 'power' || eval_type === 'symmetry') {
-      value += '%';
+      my_value_str += '%';
+      target_value_str += '%';
     }
-    let text_w = font.getStringWidth(style_eval, font_height, value);
-    let desired_x = show_mine ? myx : targetx;
-    let desired_y = (show_mine ? myy : targety) + 2*GRAPH_SCALE;
-    const minipad = 8*GRAPH_SCALE;
-    if (jj === 0) {
-      desired_y -= font_height + 2*GRAPH_SCALE;
-      desired_y = clamp(desired_y, yc - GRAPH_R + minipad, yc - font_height - minipad);
-    } else if (jj === 2) {
-      desired_y = clamp(desired_y, yc + minipad, yc + GRAPH_R - font_height - minipad);
-    } else if (jj === 1) {
-      desired_x = clamp(desired_x, xc + text_w/2 + minipad, xc + GRAPH_R - text_w/2 - minipad);
-    } else if (jj === 3) {
-      desired_x = clamp(desired_x, xc - GRAPH_R + text_w/2 + minipad, xc - text_w/2 - minipad);
+    let avoid_rect = [0, 0, 0, 0];
+    if (show_this_mine) {
+      let text_w = font.getStringWidth(style_eval, font_height, my_value_str);
+      let desired_x = myx;
+      let desired_y = myy + 2*GRAPH_SCALE;
+      const minipad = 8*GRAPH_SCALE;
+      if (jj === 0) {
+        desired_y -= font_height + 2*GRAPH_SCALE;
+        desired_y = clamp(desired_y, yc - GRAPH_R + minipad, yc - font_height - minipad);
+      } else if (jj === 2) {
+        desired_y = clamp(desired_y, yc + minipad, yc + GRAPH_R - font_height - minipad);
+      } else if (jj === 1) {
+        desired_y -= font_height + 2*GRAPH_SCALE;
+        desired_x = clamp(desired_x, xc + text_w/2 + minipad, xc + GRAPH_R - text_w/2 - minipad);
+      } else if (jj === 3) {
+        desired_y -= font_height + 2*GRAPH_SCALE;
+        desired_x = clamp(desired_x, xc - GRAPH_R + text_w/2 + minipad, xc - text_w/2 - minipad);
+      }
+      avoid_rect[0] = desired_x - text_w/2 - font_height;
+      avoid_rect[1] = desired_y - 4*GRAPH_SCALE;
+      avoid_rect[2] = desired_x + text_w/2 + font_height;
+      avoid_rect[3] = desired_y + font_height + 4*GRAPH_SCALE;
+      font.drawSizedAligned(am_close ? style_eval_match : style_eval,
+        desired_x, desired_y, Z.UI, font_height, ALIGN.HCENTER, 0, 0, my_value_str);
     }
-    if (any_hover && !hover[eval_type]) {
-      // draw nothing
-    } else {
-      font.drawSizedAligned(am_close ? style_eval_match : show_mine ? style_eval : style_eval_target2,
-        desired_x, desired_y, Z.UI, font_height, ALIGN.HCENTER, 0, 0, value);
+    if (show_this_target) {
+      let text_w = font.getStringWidth(style_eval, font_height, target_value_str);
+      let desired_x = targetx;
+      let desired_y = targety + 2*GRAPH_SCALE;
+      const minipad = 8*GRAPH_SCALE;
+      if (eval_type === 'components') {
+        desired_y -= font_height + 2*GRAPH_SCALE;
+        let y0 = yc - GRAPH_R + minipad;
+        let y1 = yc - font_height - minipad;
+        desired_y = clamp(desired_y, y0, y1);
+        if (show_this_mine) {
+          if (desired_y < avoid_rect[3] && desired_y + font_height > avoid_rect[1]) {
+            // overlaps
+            if (target_value <= my_value) {
+              // try to put below
+              if (avoid_rect[3] < y1) {
+                desired_y = avoid_rect[3];
+              } else {
+                desired_y = avoid_rect[1] - font_height;
+              }
+            } else {
+              // try to put above
+              if (avoid_rect[1] - font_height > y0) {
+                desired_y = avoid_rect[1] - font_height;
+              } else {
+                desired_y = avoid_rect[3];
+              }
+            }
+          }
+        }
+      } else if (eval_type === 'cells') {
+        let y0 = yc + minipad;
+        let y1 = yc + GRAPH_R - font_height;
+        desired_y = clamp(desired_y, y0, y1);
+        if (show_this_mine) {
+          if (desired_y < avoid_rect[3] && desired_y + font_height > avoid_rect[1]) {
+            // overlaps
+            if (target_value >= my_value) {
+              // try to put below
+              if (avoid_rect[3] < y1) {
+                desired_y = avoid_rect[3];
+              } else {
+                desired_y = avoid_rect[1] - font_height;
+              }
+            } else {
+              // try to put above
+              if (avoid_rect[1] - font_height > y0) {
+                desired_y = avoid_rect[1] - font_height;
+              } else {
+                desired_y = avoid_rect[3];
+              }
+            }
+          }
+        }
+      } else if (eval_type === 'power') {
+        desired_x = clamp(desired_x, xc + text_w/2 + minipad, xc + GRAPH_R - text_w/2 - minipad);
+      } else if (eval_type === 'symmetry') {
+        desired_x = clamp(desired_x, xc - GRAPH_R + text_w/2 + minipad, xc - text_w/2 - minipad);
+      }
+      font.drawSizedAligned(am_close && !show_this_mine ? style_eval_match : style_eval_target2,
+        desired_x, desired_y, Z.UI, font_height, ALIGN.HCENTER, 0, 0, target_value_str);
     }
   }
 
