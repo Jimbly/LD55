@@ -1035,7 +1035,7 @@ function formatMatch(v: number): string {
   if (v === 1000) {
     return '100%';
   }
-  v = round(v/10);
+  v = floor(v/10);
   if (v === 100) {
     v = 99;
   }
